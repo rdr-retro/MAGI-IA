@@ -13,13 +13,14 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QTextEdit, QLineEdit, QPushButton, 
                              QLabel, QFileDialog, QFrame, QProgressBar, QScrollArea,
                              QCheckBox)
-from PySide6.QtCore import Qt, Slot, QSize, QMetaObject, Q_ARG
+from PySide6.QtCore import Qt, Slot, QSize, QMetaObject, Q_ARG, QTimer
 from PySide6.QtGui import QFont, QPixmap, QMovie
 import numpy as np
 
 # Importar módulos locales
 from core.signals import IAWorkerSignals
 from ui.widgets import MessageWidget, ThinkingWidget
+from ui.sleep_dialog import SleepDialog
 from ui import styles
 from chat_interactivo import RedCrecimientoInfinito
 
@@ -42,9 +43,11 @@ class MAGISystem(QMainWindow):
         self.signals = IAWorkerSignals()
         self.thinking_widget = None
         
-        # Estado de audio
+        # Estado
         self.escuchando = False
         self.buffer_voz = ""
+        self.ultima_respuesta_magi = ""
+        self.debate_turn = 0 # 0=Melchor, 1=Gaspar, 2=Casper
         
         # Crear interfaz
         self.init_ui()
@@ -69,7 +72,8 @@ class MAGISystem(QMainWindow):
             lambda: self.agregar_mensaje("SISTEMA", "Sincronización finalizada.")
         )
         self.signals.cerebro_expandido.connect(
-            lambda name, n: self.agregar_mensaje("MAGI", f"{name} ha crecido a {n} neuronas.")
+            # Corregido: Las estadísticas ahora tienen su propio perfil con estrella
+            lambda name, n: self.agregar_mensaje("ESTADÍSTICAS", f"{name} ha crecido a {n} neuronas.")
         )
         self.signals.progreso_entrenamiento.connect(self.barra_progreso.setValue)
         self.signals.texto_transcrito.connect(self.cargar_texto_transcrito)
@@ -87,10 +91,10 @@ class MAGISystem(QMainWindow):
         main_layout.setSpacing(0)
         
         # Crear sidebar y área de chat
-        sidebar = self.create_sidebar()
+        self.sidebar = self.create_sidebar()
         chat_area = self.create_chat_area()
         
-        main_layout.addWidget(sidebar)
+        main_layout.addWidget(self.sidebar)
         main_layout.addWidget(chat_area)
     
     def create_sidebar(self):
@@ -120,6 +124,9 @@ class MAGISystem(QMainWindow):
         # Votante anónimo
         self.add_anonimo_section(side_layout)
         
+        # Modo Debate
+        self.add_debate_section(side_layout)
+        
         # Barra de progreso
         self.barra_progreso = QProgressBar()
         side_layout.addWidget(self.barra_progreso)
@@ -137,7 +144,9 @@ class MAGISystem(QMainWindow):
     def add_logo(self, layout):
         """Agrega el logo al layout"""
         logo_label = QLabel()
-        logo_pixmap = QPixmap("IA.png")
+        base_path = os.path.dirname(os.path.abspath(__file__))
+        logo_path = os.path.join(base_path, "IA.png")
+        logo_pixmap = QPixmap(logo_path)
         if not logo_pixmap.isNull():
             logo_label.setPixmap(logo_pixmap.scaled(180, 70, Qt.KeepAspectRatio, Qt.SmoothTransformation))
             logo_label.setAlignment(Qt.AlignCenter)
@@ -146,7 +155,8 @@ class MAGISystem(QMainWindow):
     def add_adn_animation(self, layout):
         """Agrega la animación de ADN"""
         self.adn_label = QLabel()
-        adn_path = "/Users/rauldiazgutierrez/Desktop/neurona/MAGI/src/adn.gif"
+        base_path = os.path.dirname(os.path.abspath(__file__))
+        adn_path = os.path.join(base_path, "adn.gif")
         self.adn_movie = QMovie(adn_path)
         if self.adn_movie.isValid():
             self.adn_label.setMovie(self.adn_movie)
@@ -160,7 +170,7 @@ class MAGISystem(QMainWindow):
         """Agrega la sección de entrenamiento"""
         # Título
         training_label = QLabel("BULK TRAINING")
-        training_label.setStyleSheet("color: #10a37f; font-weight: bold; font-size: 11px; padding: 3px 0;")
+        training_label.setStyleSheet("color: #10b981; font-weight: bold; font-size: 11px; padding: 3px 0; letter-spacing: 1px;")
         layout.addWidget(training_label)
         
         # Área de texto masivo
@@ -216,7 +226,7 @@ class MAGISystem(QMainWindow):
     def add_brain_status_section(self, layout):
         """Agrega la sección de estado de cerebros"""
         stats_label = QLabel("📟 MAGI STATUS")
-        stats_label.setStyleSheet("color: #ef4444; font-weight: bold; font-size: 11px; padding: 3px 0;")
+        stats_label.setStyleSheet("color: #10b981; font-weight: bold; font-size: 11px; padding: 3px 0; letter-spacing: 1px;")
         layout.addWidget(stats_label)
         
         # Crear controles para cada cerebro
@@ -250,7 +260,7 @@ class MAGISystem(QMainWindow):
         
         # Label
         brain_ia = getattr(self.brain_manager, f"ia_{brain_name}")
-        label = QLabel(f"🔴 {brain_name.upper()}: {brain_ia.n_oculta}")
+        label = QLabel(f"🟢 {brain_name.upper()}: {brain_ia.n_oculta}")
         label.setObjectName("StatLabel")
         label.setStyleSheet("font-size: 10px;")
         layout.addWidget(label, 1)
@@ -277,7 +287,7 @@ class MAGISystem(QMainWindow):
         
         # Título
         anonimo_label = QLabel("👤 ANÓNIMO")
-        anonimo_label.setStyleSheet("color: #a855f7; font-weight: bold; font-size: 11px; padding: 3px 0;")
+        anonimo_label.setStyleSheet("color: #a855f7; font-weight: bold; font-size: 11px; padding: 3px 0; letter-spacing: 1px;")
         layout.addWidget(anonimo_label)
         
         # Switch
@@ -293,27 +303,79 @@ class MAGISystem(QMainWindow):
         layout.addWidget(self.lbl_anonimo)
         
         layout.addSpacing(3)
+        
+    def add_debate_section(self, layout):
+        """Agrega la sección de modo debate"""
+        self.add_separator(layout)
+        
+        # Título
+        debate_label = QLabel("🔥 DEBATE MODE")
+        debate_label.setStyleSheet("color: #f43f5e; font-weight: bold; font-size: 11px; padding: 3px 0; letter-spacing: 1px;")
+        layout.addWidget(debate_label)
+        
+        # Switch
+        self.switch_debate = QCheckBox("Auto-Deliberación")
+        self.switch_debate.setStyleSheet(styles.DEBATE_SWITCH_STYLE)
+        self.switch_debate.stateChanged.connect(self.toggle_modo_debate)
+        layout.addWidget(self.switch_debate)
+        
+        # Estado
+        self.lbl_debate_status = QLabel("⚫ INACTIVO")
+        self.lbl_debate_status.setObjectName("StatLabel")
+        self.lbl_debate_status.setStyleSheet("color: #6b7280; font-size: 10px; font-style: italic;")
+        layout.addWidget(self.lbl_debate_status)
+        
+        layout.addSpacing(3)
     
     def create_chat_area(self):
         """Crea el área de chat"""
         chat_container = QWidget()
-        chat_container.setStyleSheet("background-color: #343541;")
+        chat_container.setStyleSheet("background-color: #0d0f17;")
         chat_vbox = QVBoxLayout(chat_container)
         chat_vbox.setContentsMargins(0, 0, 0, 0)
         chat_vbox.setSpacing(0)
         
+        # Header con botón para ocultar sidebar
+        header = QWidget()
+        header.setFixedHeight(45)
+        header.setStyleSheet("border-bottom: 1px solid #1e293b; background-color: #0d0f17;")
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(15, 0, 15, 0)
+        
+        self.btn_toggle_sidebar = QPushButton("☰")
+        self.btn_toggle_sidebar.setFixedSize(32, 32)
+        self.btn_toggle_sidebar.setToolTip("Ocultar/Mostrar Panel Lateral")
+        self.btn_toggle_sidebar.setCursor(Qt.PointingHandCursor)
+        self.btn_toggle_sidebar.setStyleSheet(styles.TOGGLE_SIDEBAR_STYLE)
+        self.btn_toggle_sidebar.clicked.connect(self.toggle_sidebar)
+        header_layout.addWidget(self.btn_toggle_sidebar)
+        
+        # Título central
+        title = QLabel("MAGI SUPERCOMPUTER")
+        title.setStyleSheet("color: #6366f1; font-weight: bold; font-size: 11px; letter-spacing: 2px;")
+        header_layout.addStretch()
+        header_layout.addWidget(title)
+        header_layout.addStretch()
+        
+        # Espacio vacío a la derecha para centrar el título
+        spacer = QWidget()
+        spacer.setFixedSize(32, 32)
+        header_layout.addWidget(spacer)
+        
+        chat_vbox.addWidget(header)
+        
         # Scroll Area
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
-        self.scroll_area.setStyleSheet("border: none; background-color: #343541;")
+        self.scroll_area.setStyleSheet("border: none; background-color: #0d0f17;")
         self.scroll_area.verticalScrollBar().setStyleSheet(styles.SCROLLBAR_STYLE)
         
         self.messages_content = QWidget()
-        self.messages_content.setStyleSheet("background-color: #343541;")
+        self.messages_content.setStyleSheet("background-color: #0d0f17;")
         self.messages_layout = QVBoxLayout(self.messages_content)
         self.messages_layout.setContentsMargins(0, 0, 0, 0)
         self.messages_layout.setSpacing(0)
-        self.messages_layout.addStretch()
+        self.messages_layout.addStretch(1) # Stretch al inicio para empujar hacia abajo
         
         self.scroll_area.setWidget(self.messages_content)
         chat_vbox.addWidget(self.scroll_area)
@@ -340,7 +402,7 @@ class MAGISystem(QMainWindow):
         # Input de texto
         self.user_input = QLineEdit()
         self.user_input.setPlaceholderText("Send a message")
-        self.user_input.setStyleSheet("border: none; background: transparent; padding: 12px; font-size: 15px; color: white;")
+        self.user_input.setStyleSheet("border: none; background: transparent; padding: 12px; font-size: 15px; color: #f8fafc;")
         self.user_input.returnPressed.connect(self.enviar_mensaje)
         inner_input_layout.addWidget(self.user_input)
         
@@ -369,13 +431,21 @@ class MAGISystem(QMainWindow):
         is_ai = autor in ["IA", "SISTEMA", "MAGI", "MELCHOR", "GASPAR", "CASPER", "ANÓNIMO"]
         msg_widget = MessageWidget(autor, mensaje, is_ai)
         
-        self.messages_layout.insertWidget(self.messages_layout.count() - 1, msg_widget)
+        self.messages_layout.addWidget(msg_widget)
         
-        # Scroll to bottom
-        QApplication.processEvents()
-        self.scroll_area.verticalScrollBar().setValue(
+        # Guardar última respuesta para el hilo del debate
+        if is_ai:
+            self.ultima_respuesta_magi = mensaje
+            if self.debate_activo:
+                # Incrementar turno para el siguiente cerebro
+                self.debate_turn = (self.debate_turn + 1) % 3
+                # Iniciar siguiente paso del debate con un pequeño retraso
+                QTimer.singleShot(3000, self.debate_step)
+        
+        # Scroll to bottom reliably
+        QTimer.singleShot(50, lambda: self.scroll_area.verticalScrollBar().setValue(
             self.scroll_area.verticalScrollBar().maximum()
-        )
+        ))
     
     @Slot(bool)
     def toggle_thinking_animation(self, mostrar):
@@ -383,7 +453,7 @@ class MAGISystem(QMainWindow):
         if mostrar:
             if self.thinking_widget is None:
                 self.thinking_widget = ThinkingWidget()
-                self.messages_layout.insertWidget(self.messages_layout.count() - 1, self.thinking_widget)
+                self.messages_layout.addWidget(self.thinking_widget)
                 QApplication.processEvents()
                 self.scroll_area.verticalScrollBar().setValue(
                     self.scroll_area.verticalScrollBar().maximum()
@@ -419,11 +489,11 @@ class MAGISystem(QMainWindow):
         """Callback cuando se activa/desactiva un cerebro"""
         label = self.brain_controls[brain_name]['label']
         if activo:
-            label.setStyleSheet("color: #8e8ea0; font-size: 12px;")
-            self.agregar_mensaje("SISTEMA", f"🔴 {brain_name.upper()} ACTIVADO - Participará en votaciones y entrenamiento")
+            label.setStyleSheet("color: #e2e8f0; font-size: 12px; font-weight: 500;")
+            self.agregar_mensaje("SISTEMA", f"🟢 {brain_name.upper()} ACTIVADO - Brain cell online")
         else:
-            label.setStyleSheet("color: #4d4d4f; font-size: 12px; text-decoration: line-through;")
-            self.agregar_mensaje("SISTEMA", f"⚫ {brain_name.upper()} DESACTIVADO - No participará temporalmente")
+            label.setStyleSheet("color: #4b5563; font-size: 12px; text-decoration: line-through;")
+            self.agregar_mensaje("SISTEMA", f"⚪ {brain_name.upper()} DESACTIVADO - Dormant state")
     
     def toggle_votante_anonimo(self, state):
         """Activa o desactiva el votante anónimo"""
@@ -438,6 +508,39 @@ class MAGISystem(QMainWindow):
             self.lbl_anonimo.setStyleSheet("color: #6b7280; font-size: 11px; font-style: italic;")
             self.agregar_mensaje("SISTEMA", "👤 Votante Anónimo DESACTIVADO - Solo votarán Melchor, Gaspar y Casper")
     
+    def toggle_modo_debate(self, state):
+        """Activa o desactiva el modo debate"""
+        self.debate_activo = (state == 2)
+        
+        if self.debate_activo:
+            self.lbl_debate_status.setText("🔴 ACTIVO - IAs conversando")
+            self.lbl_debate_status.setStyleSheet("color: #f43f5e; font-size: 11px; font-weight: bold;")
+            self.agregar_mensaje("SISTEMA", "🔥 Modo Debate ACTIVADO - Las IAs comenzarán a deliberar entre ellas")
+            
+            # Si hay una última respuesta, que sigan desde ahí, si no, que empiecen con algo
+            prompt = self.ultima_respuesta_magi if self.ultima_respuesta_magi else "Hablemos sobre nuestra propia existencia."
+            QTimer.singleShot(1000, lambda: self.debate_step(prompt))
+        else:
+            self.lbl_debate_status.setText("⚫ INACTIVO")
+            self.lbl_debate_status.setStyleSheet("color: #6b7280; font-size: 11px; font-style: italic;")
+            self.agregar_mensaje("SISTEMA", "⚫ Modo Debate DESACTIVADO")
+
+    def debate_step(self, prompt=None):
+        """Ejecuta un paso del debate con respuestas individuales"""
+        if not self.debate_activo:
+            return
+            
+        texto = prompt if prompt else self.ultima_respuesta_magi
+        if not texto: return
+
+        # Determinar a quién le toca
+        nombres = ["MELCHOR", "GASPAR", "CASPER"]
+        brain_name = nombres[self.debate_turn]
+        
+        # Procesar de forma individual
+        threading.Thread(target=self.brain_manager.process_debate_message, 
+                        args=(texto, brain_name, self.signals), daemon=True).start()
+
     def enviar_mensaje(self):
         """Envía un mensaje"""
         texto = self.user_input.text().strip()
@@ -475,9 +578,19 @@ class MAGISystem(QMainWindow):
     
     def dormir_cerebros(self):
         """Activa el modo de sueño para consolidación de memoria"""
-        self.agregar_mensaje("SISTEMA", "💤 Activando modo de sueño profundo...")
+        dialog = SleepDialog(self)
+        dialog.sleep_started.connect(self.ejecutar_modo_sueno)
+        dialog.exec()
+    
+    def ejecutar_modo_sueno(self, duracion_segundos):
+        """Ejecuta el modo de sueño con la duración especificada"""
+        self.agregar_mensaje("SISTEMA", f"💤 Activando modo de sueño profundo por {duracion_segundos // 60} minutos...")
         threading.Thread(target=self.brain_manager.sleep_all_brains, 
                         args=(self.signals,), daemon=True).start()
+    
+    def toggle_sidebar(self):
+        """Muestra u oculta la barra lateral"""
+        self.sidebar.setVisible(not self.sidebar.isVisible())
     
     def abrir_txt(self):
         """Abre un archivo de texto"""

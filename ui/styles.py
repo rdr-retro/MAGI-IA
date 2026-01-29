@@ -1,174 +1,268 @@
 """
-Estilos CSS para la interfaz del sistema MAGI
+Estilos CSS para la interfaz del sistema MAGI - Premium Edition
 """
 
-# Estilo global de la aplicación
+# Paleta de colores
+# Background: #0d0f17 (Very Dark Blue/Gray)
+# Panel: #161923 (Dark Blue/Gray)
+# Accent: #6366f1 (Indigo)
+# Success: #10b981 (Emerald)
+# Text: #e2e8f0 (Slate 200)
+# Muted: #94a3b8 (Slate 400)
+
 GLOBAL_STYLE = """
-    QMainWindow { background-color: #343541; }
-    QWidget { color: #ececf1; font-family: 'Arial', Arial; }
-    QFrame#SidePanel { background-color: #202123; border: none; }
+    QMainWindow { 
+        background-color: #0d0f17; 
+    }
+    QWidget { 
+        color: #e2e8f0; 
+        font-family: 'Inter', 'Helvetica Neue', 'Arial', sans-serif;
+    }
+    QFrame#SidePanel { 
+        background-color: #161923; 
+        border-right: 1px solid #2d3748; 
+    }
     
     /* Sidebar buttons */
     QPushButton#SecondaryBtn { 
         background-color: transparent; 
+        border: 1px solid transparent; 
+        border-radius: 8px; 
+        padding: 10px; 
+        color: #cbced4; 
+        text-align: left;
+        font-size: 13px;
+    }
+    QPushButton#SecondaryBtn:hover { 
+        background-color: #262a38; 
+        border: 1px solid #374151;
+        color: white;
+    }
+
+    QLabel#StatLabel { color: #94a3b8; font-size: 11px; font-weight: 500; }
+    
+    QProgressBar { 
+        background-color: #1f2937; 
         border: none; 
         border-radius: 4px; 
-        padding: 8px; 
-        color: #ececf1; 
-        text-align: left;
-        font-size: 12px;
+        height: 6px; 
+        text-align: center; 
     }
-    QPushButton#SecondaryBtn:hover { background-color: #3f404d; }
-
-    QLabel#StatLabel { color: #8e8ea0; font-size: 10px; }
-    QProgressBar { background-color: #202123; border: 1px solid #4d4d4f; border-radius: 3px; height: 5px; text-align: center; }
-    QProgressBar::chunk { background-color: #10a37f; }
+    QProgressBar::chunk { 
+        background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #6366f1, stop:1 #8b5cf6);
+        border-radius: 4px; 
+    }
 """
 
-# Estilo del botón de entrenamiento
 TRAIN_BUTTON_STYLE = """
     QPushButton#TrainBtn {
-        background-color: #10a37f;
+        background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #10b981, stop:1 #059669);
         color: white;
         border: none;
-        border-radius: 5px;
-        padding: 8px;
+        border-radius: 8px;
+        padding: 10px;
         font-weight: bold;
-        font-size: 12px;
+        font-size: 13px;
+        letter-spacing: 0.5px;
     }
     QPushButton#TrainBtn:hover {
-        background-color: #0d8c6f;
+        background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #34d399, stop:1 #10b981);
     }
     QPushButton#TrainBtn:pressed {
-        background-color: #0a7a5e;
+        background-color: #047857;
+        margin-top: 1px;
     }
 """
 
-# Estilo del botón de sueño (consolidación de memoria)
 SLEEP_BUTTON_STYLE = """
     QPushButton#SleepBtn {
-        background-color: #7c3aed;
+        background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #8b5cf6, stop:1 #6d28d9);
         color: white;
         border: none;
-        border-radius: 5px;
-        padding: 8px;
+        border-radius: 8px;
+        padding: 10px;
         font-weight: bold;
-        font-size: 12px;
+        font-size: 13px;
+        letter-spacing: 0.5px;
     }
     QPushButton#SleepBtn:hover {
-        background-color: #6d28d9;
+        background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #a78bfa, stop:1 #7c3aed);
     }
     QPushButton#SleepBtn:pressed {
-        background-color: #5b21b6;
+        margin-top: 1px;
     }
 """
 
-# Estilo del área de texto masivo
 MASSIVE_INPUT_STYLE = """
     QTextEdit {
-        background-color: #2a2b32;
-        border: 1px solid #3e3f4b;
-        border-radius: 5px;
-        padding: 6px;
-        color: #d1d5db;
-        font-size: 11px;
-        font-family: 'Menlo', 'Monaco', monospace;
+        background-color: #1f2937;
+        border: 1px solid #374151;
+        border-radius: 8px;
+        padding: 10px;
+        color: #e2e8f0;
+        font-size: 12px;
+        font-family: 'Menlo', 'Monaco', 'Consolas', monospace;
+    }
+    QTextEdit:focus {
+        border: 1px solid #6366f1;
+        background-color: #111827;
     }
 """
 
-# Estilo del input del usuario
 USER_INPUT_STYLE = """
-    background-color: #40414f; 
-    border: 1px solid #565869; 
-    border-radius: 12px;
+    QFrame {
+        background-color: #1f2937; 
+        border: 1px solid #374151; 
+        border-radius: 20px;
+    }
+    QFrame:hover {
+        border: 1px solid #4b5563;
+    }
 """
 
-# Estilo del botón de enviar
 SEND_BUTTON_STYLE = """
     QPushButton { 
-        background-color: #10a37f; 
+        background-color: #6366f1; 
         color: white; 
-        border-radius: 6px; 
+        border-radius: 12px; 
         font-size: 16px; 
-    }
-    QPushButton:disabled {
-        background-color: #2b2c2f;
-        color: #8e8ea0;
-    }
-"""
-
-# Estilo del botón de micrófono
-MIC_BUTTON_STYLE = """
-    QPushButton { 
-        background-color: #3e3f4b; 
-        color: white; 
-        border-radius: 6px; 
-        font-size: 16px; 
+        border: none;
     }
     QPushButton:hover {
-        background-color: #4d4d4f;
+        background-color: #818cf8;
+    }
+    QPushButton:pressed {
+        background-color: #4f46e5;
+    }
+    QPushButton:disabled {
+        background-color: #374151;
+        color: #6b7280;
     }
 """
 
-# Estilo del botón de micrófono activo
-MIC_BUTTON_ACTIVE_STYLE = "background-color: #ef4444; color: white; border-radius: 6px; font-size: 16px;"
+MIC_BUTTON_STYLE = """
+    QPushButton { 
+        background-color: #374151; 
+        color: #e2e8f0; 
+        border-radius: 12px; 
+        font-size: 16px; 
+        border: none;
+    }
+    QPushButton:hover {
+        background-color: #4b5563;
+        color: white;
+    }
+"""
 
-# Estilo del scrollbar
+MIC_BUTTON_ACTIVE_STYLE = """
+    QPushButton { 
+        background-color: #ef4444; 
+        color: white; 
+        border-radius: 12px; 
+        font-size: 16px;
+        border: none;
+    }
+    QPushButton:hover {
+        background-color: #dc2626;
+    }
+"""
+
 SCROLLBAR_STYLE = """
-    QScrollBar:vertical { border: none; background: #343541; width: 8px; margin: 0; }
-    QScrollBar::handle:vertical { background: #565869; min-height: 20px; border-radius: 4px; }
+    QScrollBar:vertical { border: none; background: #0d0f17; width: 10px; margin: 0; }
+    QScrollBar::handle:vertical { background: #374151; min-height: 20px; border-radius: 5px; }
+    QScrollBar::handle:vertical:hover { background: #4b5563; }
     QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
 """
 
-# Estilo de los checkboxes de cerebros
 CHECKBOX_STYLE = """
     QCheckBox::indicator {
-        width: 14px;
-        height: 14px;
-        border-radius: 2px;
-        border: 2px solid #10a37f;
-        background-color: #202123;
+        width: 16px;
+        height: 16px;
+        border-radius: 4px;
+        border: 2px solid #6366f1;
+        background-color: #1f2937;
     }
     QCheckBox::indicator:checked {
-        background-color: #10a37f;
-        border: 2px solid #10a37f;
+        background-color: #6366f1;
+        border: 2px solid #6366f1;
         image: url(data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTIiIGhlaWdodD0iMTIiIHZpZXdCb3g9IjAgMCAxMiAxMiIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHBhdGggZD0iTTEwIDNMNC41IDguNUwyIDYiIHN0cm9rZT0id2hpdGUiIHN0cm9rZS13aWR0aD0iMiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIi8+Cjwvc3ZnPgo=);
     }
     QCheckBox::indicator:hover {
-        border: 2px solid #0d8c6f;
+        border: 2px solid #818cf8;
+        background-color: #374151;
     }
 """
 
-# Estilo del switch del votante anónimo
+
 ANONIMO_SWITCH_STYLE = """
     QCheckBox {
-        color: #8e8ea0;
-        font-size: 10px;
-        spacing: 6px;
+        color: #94a3b8;
+        font-size: 11px;
+        spacing: 8px;
+        font-weight: 500;
     }
     QCheckBox::indicator {
-        width: 36px;
-        height: 18px;
-        border-radius: 9px;
-        background-color: #3e3f4b;
-        border: 2px solid #565869;
+        width: 40px;
+        height: 20px;
+        border-radius: 10px;
+        background-color: #374151;
+        border: 2px solid #4b5563;
     }
     QCheckBox::indicator:checked {
         background-color: #a855f7;
         border: 2px solid #a855f7;
     }
     QCheckBox::indicator:hover {
-        border: 2px solid #8e8ea0;
+        border: 2px solid #6b7280;
     }
 """
 
-# Estilo del botón de carga de cerebro
+DEBATE_SWITCH_STYLE = """
+    QCheckBox {
+        color: #94a3b8;
+        font-size: 11px;
+        spacing: 8px;
+        font-weight: 500;
+    }
+    QCheckBox::indicator {
+        width: 40px;
+        height: 20px;
+        border-radius: 10px;
+        background-color: #374151;
+        border: 2px solid #4b5563;
+    }
+    QCheckBox::indicator:checked {
+        background-color: #f43f5e;
+        border: 2px solid #f43f5e;
+    }
+    QCheckBox::indicator:hover {
+        border: 2px solid #6b7280;
+    }
+"""
+
+
+
 LOAD_BRAIN_BUTTON_STYLE = """
     QPushButton { 
-        background-color: #3e3f4b; 
-        color: white; 
-        border-radius: 3px; 
-        font-size: 11px; 
+        background-color: #374151; 
+        color: #e2e8f0; 
+        border-radius: 4px; 
+        font-size: 12px; 
     }
-    QPushButton:hover { background-color: #4d4d4f; }
+    QPushButton:hover { background-color: #4b5563; color: white; }
 """
+
+TOGGLE_SIDEBAR_STYLE = """
+    QPushButton {
+        background-color: transparent;
+        color: #94a3b8;
+        border: none;
+        font-size: 18px;
+    }
+    QPushButton:hover {
+        color: white;
+        background-color: #1f2937;
+        border-radius: 4px;
+    }
+"""
+

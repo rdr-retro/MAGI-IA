@@ -1,127 +1,161 @@
 """
-Widgets personalizados para la interfaz MAGI
+Widgets personalizados para la interfaz MAGI - Premium Edition
 """
-from PySide6.QtWidgets import QWidget, QHBoxLayout, QLabel
+from PySide6.QtWidgets import QWidget, QHBoxLayout, QLabel, QVBoxLayout, QFrame
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QFont
 
 
 class MessageWidget(QWidget):
-    """Widget para mostrar mensajes en el chat"""
+    """Widget para mostrar mensajes en el chat con alineación lateral"""
     
     def __init__(self, author, text, is_ai=False):
         super().__init__()
-        self.layout = QHBoxLayout(self)
-        self.layout.setContentsMargins(80, 16, 80, 16)
-        self.layout.setSpacing(12)
         
-        # COLORES SEGÚN LA NUEVA IMAGEN
-        # Usuario: Gris azulado (#343541)
-        # IA: Gris oscuro (#444654)
-        bg_color = "#444654" if is_ai else "#343541"
-        self.setStyleSheet(f"background-color: {bg_color}; border: none;")
+        # Reconocer si es un mensaje de estadísticas
+        is_stats = author == "ESTADÍSTICAS"
         
+        self.main_layout = QHBoxLayout(self)
+        self.main_layout.setContentsMargins(50, 10, 50, 10)
+        self.main_layout.setSpacing(0)
+        
+        # Contenedor de la burbuja
+        self.bubble = QFrame()
+        self.bubble_layout = QHBoxLayout(self.bubble)
+        self.bubble_layout.setContentsMargins(15, 12, 15, 12)
+        self.bubble_layout.setSpacing(15)
+        
+        # Estilizacion según autor
+        if is_ai or is_stats:
+            bg_color = "#1f2937"
+            self.bubble.setStyleSheet(f"background-color: {bg_color}; border-radius: 12px; border-bottom-left-radius: 2px;")
+            self.main_layout.addWidget(self.bubble)
+            self.main_layout.addStretch()
+        else:
+            bg_color = "#312e81" # Indigo profundo para el usuario
+            self.bubble.setStyleSheet(f"background-color: {bg_color}; border-radius: 12px; border-bottom-right-radius: 2px;")
+            self.main_layout.addStretch()
+            self.main_layout.addWidget(self.bubble)
+
         # Avatar
         avatar_label = QLabel()
-        avatar_label.setFixedSize(28, 28)
+        avatar_label.setFixedSize(32, 32)
         avatar_label.setAlignment(Qt.AlignCenter)
-        avatar_label.setFont(QFont("Arial", 9, QFont.Bold))
+        avatar_label.setFont(QFont("Inter", 10, QFont.Bold))
         
-        # Detectar si es un mensaje de micrófono/transcripción
         is_mic_message = "🎤" in text or "Transcrito:" in text or "Micrófono" in text or author == "MIC"
         
-        if is_ai:
-            if is_mic_message:
-                avatar_label.setText("MI")  # MI para mensajes de micrófono
-                avatar_label.setStyleSheet("border-radius: 2px; background-color: #3b82f6; color: white;")  # Azul para micrófono
+        if is_ai or is_stats:
+            if is_stats:
+                avatar_label.setText("🌟")
+                avatar_label.setStyleSheet("border-radius: 6px; background-color: #f59e0b; color: white;") 
+            elif author == "MELCHOR":
+                avatar_label.setText("ME")
+                avatar_label.setStyleSheet("border-radius: 6px; background-color: #ef4444; color: white;")
+            elif author == "GASPAR":
+                avatar_label.setText("GA")
+                avatar_label.setStyleSheet("border-radius: 6px; background-color: #10b981; color: white;")
+            elif author == "CASPER":
+                avatar_label.setText("CA")
+                avatar_label.setStyleSheet("border-radius: 6px; background-color: #6366f1; color: white;")
+            elif is_mic_message:
+                avatar_label.setText("MI")
+                avatar_label.setStyleSheet("border-radius: 6px; background-color: #3b82f6; color: white;")
             elif author == "ANÓNIMO":
-                avatar_label.setText("??")  # ?? para votante anónimo
-                avatar_label.setStyleSheet("border-radius: 2px; background-color: #a855f7; color: white;")  # Púrpura para anónimo
+                avatar_label.setText("??")
+                avatar_label.setStyleSheet("border-radius: 6px; background-color: #a855f7; color: white;")
             else:
                 avatar_label.setText("AI") 
-                avatar_label.setStyleSheet("border-radius: 2px; background-color: #10a37f; color: white;")
+                avatar_label.setStyleSheet("border-radius: 6px; background-color: #10b981; color: white;")
+            self.bubble_layout.addWidget(avatar_label, alignment=Qt.AlignTop)
         else:
-            avatar_label.setText("UL") # 'UL' como en la imagen
-            # Púrpura/Rosa para el usuario como en la nueva imagen
-            avatar_label.setStyleSheet("border-radius: 2px; background-color: #8e44ad; color: white;")
+            avatar_label.setText("UL")
+            avatar_label.setStyleSheet("border-radius: 6px; background-color: #6366f1; color: white;")
         
-        self.layout.addWidget(avatar_label, alignment=Qt.AlignTop)
+        # Texto
+        text_container = QVBoxLayout()
+        author_label = QLabel(author.upper())
         
-        # Text Message
+        # Selección de color de acento por autor
+        if is_stats: accent = '#f59e0b'
+        elif author == "MELCHOR": accent = '#ef4444'
+        elif author == "GASPAR": accent = '#10b981'
+        elif author == "CASPER": accent = '#6366f1'
+        elif is_ai: accent = '#10b981'
+        else: accent = '#a5b4fc'
+        
+        author_label.setStyleSheet(f"color: {accent}; font-size: 9px; font-weight: bold; letter-spacing: 1px;")
+        text_container.addWidget(author_label)
+        
         self.text_label = QLabel(text)
         self.text_label.setWordWrap(True)
         self.text_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        self.text_label.setFont(QFont("Arial", 10))
-        self.text_label.setStyleSheet("color: #d1d5db; background: transparent; line-height: 1.5;")
-        self.layout.addWidget(self.text_label, 1)
+        self.text_label.setFont(QFont("Inter", 11))
+        self.text_label.setStyleSheet("color: #f1f5f9; background: transparent; line-height: 1.4;")
+        text_container.addWidget(self.text_label)
         
-        # Removed feedback icons as requested
-        if not is_ai:
-            self.layout.addSpacing(60)
+        self.bubble_layout.addLayout(text_container, 1)
+        
+        if not is_ai and not is_stats:
+            self.bubble_layout.addWidget(avatar_label, alignment=Qt.AlignTop)
 
 
 class ThinkingWidget(QWidget):
-    """Widget animado que muestra cuando MAGI está deliberando"""
+    """Widget animado de deliberación alineado a la izquierda"""
     
     def __init__(self):
         super().__init__()
-        self.layout = QHBoxLayout(self)
-        self.layout.setContentsMargins(80, 16, 80, 16)
-        self.layout.setSpacing(12)
+        self.main_layout = QHBoxLayout(self)
+        self.main_layout.setContentsMargins(50, 10, 50, 10)
         
-        # Fondo similar a mensajes de IA
-        self.setStyleSheet("background-color: #444654; border: none;")
+        self.bubble = QFrame()
+        self.bubble.setStyleSheet("background-color: #1f2937; border-radius: 12px; border-bottom-left-radius: 2px;")
+        self.bubble_layout = QHBoxLayout(self.bubble)
+        self.bubble_layout.setContentsMargins(15, 12, 15, 12)
+        self.bubble_layout.setSpacing(15)
         
         # Avatar
-        avatar_label = QLabel()
-        avatar_label.setFixedSize(28, 28)
+        avatar_label = QLabel("AI")
+        avatar_label.setFixedSize(32, 32)
         avatar_label.setAlignment(Qt.AlignCenter)
-        avatar_label.setFont(QFont("Arial", 9, QFont.Bold))
-        avatar_label.setText("AI")
-        avatar_label.setStyleSheet("border-radius: 2px; background-color: #10a37f; color: white;")
-        self.layout.addWidget(avatar_label, alignment=Qt.AlignTop)
+        avatar_label.setFont(QFont("Inter", 10, QFont.Bold))
+        avatar_label.setStyleSheet("border-radius: 6px; background-color: #10b981; color: white;")
+        self.bubble_layout.addWidget(avatar_label, alignment=Qt.AlignTop)
         
-        # Contenedor de animación
-        anim_container = QWidget()
-        anim_layout = QHBoxLayout(anim_container)
-        anim_layout.setContentsMargins(0, 0, 0, 0)
-        anim_layout.setSpacing(8)
+        # Animación
+        content_layout = QVBoxLayout()
+        author_label = QLabel("MAGI")
+        author_label.setStyleSheet("color: #10b981; font-size: 9px; font-weight: bold; letter-spacing: 1px;")
+        content_layout.addWidget(author_label)
         
-        # Texto de deliberación
-        self.thinking_label = QLabel("MAGI deliberando")
-        self.thinking_label.setFont(QFont("Arial", 10))
-        self.thinking_label.setStyleSheet("color: #10a37f; background: transparent;")
+        anim_layout = QHBoxLayout()
+        self.thinking_label = QLabel("Deliberando")
+        self.thinking_label.setFont(QFont("Inter", 11))
+        self.thinking_label.setStyleSheet("color: #94a3b8; font-size: 11px;")
         anim_layout.addWidget(self.thinking_label)
         
-        # Puntos animados
         self.dots = []
         for i in range(3):
             dot = QLabel("●")
-            dot.setFont(QFont("Arial", 14))
-            dot.setStyleSheet("color: #10a37f; background: transparent;")
+            dot.setStyleSheet("color: #10b981; font-size: 10px;")
             self.dots.append(dot)
             anim_layout.addWidget(dot)
-        
         anim_layout.addStretch()
-        self.layout.addWidget(anim_container, 1)
+        content_layout.addLayout(anim_layout)
         
-        # Animación de los puntos
+        self.bubble_layout.addLayout(content_layout)
+        self.main_layout.addWidget(self.bubble)
+        self.main_layout.addStretch()
+        
         self.timer = QTimer()
         self.timer.timeout.connect(self.animate_dots)
         self.current_dot = 0
-        self.timer.start(400)  # Cambiar cada 400ms
+        self.timer.start(400)
 
     def animate_dots(self):
-        """Anima los puntos de pensamiento"""
         for i, dot in enumerate(self.dots):
-            if i == self.current_dot:
-                dot.setStyleSheet("color: #10a37f; background: transparent; font-weight: bold;")
-            else:
-                dot.setStyleSheet("color: #565869; background: transparent;")
-        
+            dot.setStyleSheet(f"color: {'#10b981' if i == self.current_dot else '#374151'}; font-size: 10px;")
         self.current_dot = (self.current_dot + 1) % 3
     
     def stop_animation(self):
-        """Detiene la animación"""
-        if hasattr(self, 'timer'):
-            self.timer.stop()
+        if hasattr(self, 'timer'): self.timer.stop()

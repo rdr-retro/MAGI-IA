@@ -116,11 +116,11 @@ class BrainManager:
                 # Guardar cerebro después del sueño
                 ia.guardar(path)
                 
-                signals.respuesta_lista.emit("SISTEMA", 
+                signals.respuesta_lista.emit("ESTADÍSTICAS", 
                     f"   └─ {nombre}: {resultado['podadas']:,} podadas, {resultado['reforzadas']:,} reforzadas")
             
             # Resumen final
-            signals.respuesta_lista.emit("SISTEMA", 
+            signals.respuesta_lista.emit("ESTADÍSTICAS", 
                 f"✨ Sueño completado - Total: {resultados_totales['podadas']:,} conexiones eliminadas, "
                 f"{resultados_totales['reforzadas']:,} reforzadas, {resultados_totales['activas']:,} activas")
             
@@ -241,11 +241,43 @@ class BrainManager:
             mayoria_msg = f"[MAYORÍA: {', '.join(cerebros_activos)}]"
             signals.respuesta_lista.emit("MAGI", f"{mayoria_msg} {respuesta_final}")
         
-        # Entrenar cerebros activos
-        for ia, path, _ in self.get_active_brains():
             ia.aprender(texto)
             ia.aprender(respuesta_final, epocas=1)
             ia.guardar(path)
+
+    def process_debate_message(self, texto, brain_name, signals):
+        """Procesa un mensaje en modo debate, haciendo que un cerebro específico responda"""
+        signals.pensando.emit(True)
+        
+        # Identificar cerebro
+        ia_obj = None
+        ia_path = ""
+        
+        if brain_name == "MELCHOR" and self.melchor_activo:
+            ia_obj, ia_path = self.ia_melchor, self.archivo_melchor
+        elif brain_name == "GASPAR" and self.gaspar_activo:
+            ia_obj, ia_path = self.ia_gaspar, self.archivo_gaspar
+        elif brain_name == "CASPER" and self.casper_activo:
+            ia_obj, ia_path = self.ia_casper, self.archivo_casper
+            
+        if not ia_obj:
+            # Si el cerebro actual no está activo, buscar el siguiente activo
+            activos = self.get_active_brains()
+            if not activos:
+                signals.pensando.emit(False)
+                return
+            ia_obj, ia_path, brain_name = activos[0]
+
+        # Generar respuesta
+        respuesta = ia_obj.generar_respuesta(texto)
+        
+        # Aprender del mensaje anterior
+        ia_obj.aprender(texto)
+        ia_obj.aprender(respuesta, epocas=1)
+        ia_obj.guardar(ia_path)
+        
+        signals.pensando.emit(False)
+        signals.respuesta_lista.emit(brain_name, respuesta)
     
     def train_massive(self, texto, signals):
         """Entrenamiento masivo"""
