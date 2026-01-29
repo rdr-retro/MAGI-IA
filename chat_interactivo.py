@@ -25,38 +25,45 @@ class RedCrecimientoInfinito:
             n_vocab = len(self.vocab)
             
             # Inicialización Xavier/Glorot
-            self.w_eo = np.random.randn(n_vocab, self.n_oculta) * np.sqrt(1. / n_vocab)
-            self.w_os = np.random.randn(self.n_oculta, n_vocab) * np.sqrt(1. / self.n_oculta)
-            self.b_o = np.zeros((1, self.n_oculta))
-            self.b_s = np.zeros((1, n_vocab))
+            # Inicialización Xavier/Glorot con float32
+            self.w_eo = (np.random.randn(n_vocab, self.n_oculta) * np.sqrt(1. / n_vocab)).astype(np.float32)
+            self.w_os = (np.random.randn(self.n_oculta, n_vocab) * np.sqrt(1. / self.n_oculta)).astype(np.float32)
+            self.b_o = np.zeros((1, self.n_oculta), dtype=np.float32)
+            self.b_s = np.zeros((1, n_vocab), dtype=np.float32)
             
-            # Buffers para Adam
-            self.m_w_eo, self.v_w_eo = np.zeros_like(self.w_eo), np.zeros_like(self.w_eo)
-            self.m_w_os, self.v_w_os = np.zeros_like(self.w_os), np.zeros_like(self.w_os)
-            self.m_b_o, self.v_b_o = np.zeros_like(self.b_o), np.zeros_like(self.b_o)
-            self.m_b_s, self.v_b_s = np.zeros_like(self.b_s), np.zeros_like(self.b_s)
+            # Buffers para Adam en float32
+            self.m_w_eo, self.v_w_eo = np.zeros_like(self.w_eo, dtype=np.float32), np.zeros_like(self.w_eo, dtype=np.float32)
+            self.m_w_os, self.v_w_os = np.zeros_like(self.w_os, dtype=np.float32), np.zeros_like(self.w_os, dtype=np.float32)
+            self.m_b_o, self.v_b_o = np.zeros_like(self.b_o, dtype=np.float32), np.zeros_like(self.b_o, dtype=np.float32)
+            self.m_b_s, self.v_b_s = np.zeros_like(self.b_s, dtype=np.float32), np.zeros_like(self.b_s, dtype=np.float32)
 
     def expandir_cerebro(self):
-        """Añade neuronas nuevas manteniendo lo aprendido"""
+        """Añade neuronas nuevas con crecimiento logarítmico para evitar lentitud extrema"""
         with self.lock:
-            incremento = 64
+            # Límite de seguridad mucho más alto para supercomputación
+            if self.n_oculta >= 1000000:
+                return
+                
+            # Crecimiento más inteligente: cuanto más grande, más lento crece (logarítmico)
+            incremento = max(8, int(128 / (1 + np.log1p(self.n_oculta / 128))))
+            
             n_vocab = len(self.vocab)
             nueva_n_oculta = self.n_oculta + incremento
             
-            print(f"\n🧠 ¡EVOLUCIÓN! Expandiendo a {nueva_n_oculta} neuronas...")
+            print(f"\n🧠 OPTIMIZACIÓN: Expandiendo a {nueva_n_oculta} neuronas (crecimiento controlado)...")
             
-            # Expandir Pesos Entada-Oculta
-            nuevos_w_eo = np.random.randn(n_vocab, nueva_n_oculta) * np.sqrt(1. / n_vocab)
+            # Expandir Pesos Entada-Oculta (float32)
+            nuevos_w_eo = (np.random.randn(n_vocab, nueva_n_oculta) * np.sqrt(1. / n_vocab)).astype(np.float32)
             nuevos_w_eo[:, :self.n_oculta] = self.w_eo
             self.w_eo = nuevos_w_eo
             
             # Expandir Pesos Oculta-Salida
-            nuevos_w_os = np.random.randn(nueva_n_oculta, n_vocab) * np.sqrt(1. / nueva_n_oculta)
+            nuevos_w_os = (np.random.randn(nueva_n_oculta, n_vocab) * np.sqrt(1. / nueva_n_oculta)).astype(np.float32)
             nuevos_w_os[:self.n_oculta, :] = self.w_os
             self.w_os = nuevos_w_os
             
             # Expandir Sesgos
-            self.b_o = np.concatenate([self.b_o, np.zeros((1, incremento))], axis=1)
+            self.b_o = np.concatenate([self.b_o, np.zeros((1, incremento), dtype=np.float32)], axis=1)
             
             # Expandir Buffers Adam
             self.m_w_eo = np.pad(self.m_w_eo, ((0,0), (0, incremento)))
@@ -72,14 +79,38 @@ class RedCrecimientoInfinito:
                 self.on_expand(self.n_oculta)
 
     def softmax(self, x):
-        e_x = np.exp(x - np.max(x, axis=1, keepdims=True))
-        return e_x / e_x.sum(axis=1, keepdims=True)
+        # x es float32, max es float32
+        x_max = np.max(x, axis=1, keepdims=True)
+        e_x = np.exp(x - x_max)
+        return (e_x / (e_x.sum(axis=1, keepdims=True) + 1e-8)).astype(np.float32)
 
     def forward(self, x_indices):
-        """Forward optimizado"""
+        """Forward optimizado con Ventana de Contexto (Causal Mean Pooling)"""
         with self.lock:
-            # self.hidden es un buffer compartido, debe protegerse por el lock de aprender()
-            self.hidden = np.tanh(self.w_eo[x_indices] + self.b_o)
+            # Embeddings de los caracteres actuales
+            embeddings = self.w_eo[x_indices] # (L, D)
+            
+            # Aplicar Ventana de Contexto (Media móvil causal)
+            # Esto permite que cada caracter "tenga memoria" de los N anteriores
+            self.window_size = 10
+            L = len(x_indices)
+            
+            if L > 1:
+                # Calculo de media móvil rápida (O(L))
+                cumsum = np.cumsum(embeddings, axis=0)
+                context_embeddings = cumsum.copy()
+                # Restar el elemento que sale de la ventana
+                k = self.window_size
+                context_embeddings[k:] -= cumsum[:-k]
+                
+                # Divisores dinámicos para el inicio de la secuencia
+                divisores = np.arange(1, L + 1)
+                divisores[divisores > k] = k
+                self.emb_with_context = (context_embeddings / divisores[:, None]).astype(np.float32)
+            else:
+                self.emb_with_context = embeddings
+            
+            self.hidden = np.tanh(self.emb_with_context + self.b_o).astype(np.float32)
             self.output = self.softmax(np.dot(self.hidden, self.w_os) + self.b_s)
             return self.output
 
@@ -94,22 +125,48 @@ class RedCrecimientoInfinito:
             
             X = indices[:-1]
             Y = indices[1:]
+            L = len(X)
             
             for _ in range(epocas):
                 self.t += 1
                 probabilidades = self.forward(X)
                 
+                # Gradiente de salida (Loss: Cross-Entropy)
                 dz_salida = probabilidades.copy()
                 dz_salida[np.arange(len(Y)), Y] -= 1
                 dz_salida /= len(Y)
                 
+                # Gradientes de la capa de salida
                 dw_os = np.dot(self.hidden.T, dz_salida)
                 db_s = np.sum(dz_salida, axis=0, keepdims=True)
                 
+                # Gradiente hacia la capa oculta
                 d_hidden = np.dot(dz_salida, self.w_os.T) * (1 - self.hidden**2)
                 
+                # --- DISTRIBUCIÓN DE GRADIENTES POR VENTANA DE CONTEXTO ---
+                # Como usamos el promedio de una ventana, el gradiente en cada posición
+                # se distribuye equitativamente entre los caracteres de esa ventana.
+                d_embeddings = d_hidden.copy()
+                if L > 1:
+                    k = self.window_size
+                    # Inversa del promedio móvil (propagación de gradiente causal)
+                    # Cada posición t recibe gradiente de d_hidden[t...t+k-1]
+                    d_emb_distribuido = np.zeros_like(d_embeddings)
+                    
+                    # Divisores dinámicos para normalizar el gradiente
+                    divisores = np.arange(1, L + 1)
+                    divisores[divisores > k] = k
+                    d_hidden_normalized = d_hidden / divisores[:, None]
+                    
+                    # Acumular gradientes (ventana deslizante inversa)
+                    # Este bloque simula la distribución del gradiente del promedio
+                    for t in range(L):
+                        end_idx = min(t + k, L)
+                        d_emb_distribuido[t] = np.sum(d_hidden_normalized[t:end_idx], axis=0)
+                    d_embeddings = d_emb_distribuido
+
                 dw_eo = np.zeros_like(self.w_eo)
-                np.add.at(dw_eo, X, d_hidden)
+                np.add.at(dw_eo, X, d_embeddings)
                 db_o = np.sum(d_hidden, axis=0, keepdims=True)
                 
                 # --- OPTIMIZADOR ADAM ---
@@ -125,12 +182,20 @@ class RedCrecimientoInfinito:
                     v_hat = v / (1 - self.beta2**self.t + self.eps)
                     param -= self.lr * m_hat / (np.sqrt(v_hat) + self.eps)
 
-            ultimo_bloque = self.caracteres_totales // 500
-            self.caracteres_totales += len(X)
-            nuevo_bloque = self.caracteres_totales // 500
-            
-            if nuevo_bloque > ultimo_bloque:
-                self.expandir_cerebro()
+            # Lógica de crecimiento mejorada para textos largos (PDF/Cargas masivas)
+                # Expande una vez por cada 500 caracteres procesados
+                caracteres_a_contar = len(X)
+                while caracteres_a_contar > 0:
+                    # Cuánto falta para el próximo bloque de 500
+                    falta_para_bloque = 500 - (self.caracteres_totales % 500)
+                    if falta_para_bloque == 0: falta_para_bloque = 500
+                    
+                    avance = min(caracteres_a_contar, falta_para_bloque)
+                    self.caracteres_totales += avance
+                    caracteres_a_contar -= avance
+                    
+                    if self.caracteres_totales % 500 == 0:
+                        self.expandir_cerebro()
 
     def dormir(self, umbral_poda=0.01, factor_refuerzo=1.1):
         """Simula el sueño: consolida memoria"""
@@ -190,25 +255,38 @@ class RedCrecimientoInfinito:
 
     def generar_respuesta(self, semilla, longitud=80):
         with self.lock:
-            if not semilla or semilla[-1] not in self.char_to_int:
-                char_actual = np.random.choice(self.vocab)
-            else:
-                char_actual = semilla[-1]
+            # Convertir semilla a índices (máximo los últimos 10 para contexto inicial)
+            indices_contexto = [self.char_to_int[c] for c in semilla if c in self.char_to_int]
+            if not indices_contexto:
+                indices_contexto = [self.char_to_int[np.random.choice(self.vocab)]]
                 
             res = ""
             for _ in range(longitud):
-                idx = self.char_to_int[char_actual]
-                prediccion = self.forward([idx])
+                # Usar los últimos N caracteres como contexto para la predicción
+                # Pasamos la ventana actual al forward
+                input_seq = indices_contexto[-10:]
+                prediccion_batch = self.forward(input_seq)
                 
-                preds = prediccion[0]
+                # La predicción para el siguiente caracter es la última del batch
+                preds = prediccion_batch[-1]
+                
+                # Aplicar temperatura para variabilidad
                 preds = np.log(preds + self.eps) / 0.7
                 exp_preds = np.exp(preds)
                 probabilidades = exp_preds / np.sum(exp_preds)
                 
+                # Muestreo
                 siguiente_idx = np.random.choice(len(self.vocab), p=probabilidades)
-                char_actual = self.int_to_char[siguiente_idx]
-                res += char_actual
-                if char_actual in ".\n" or (char_actual == " " and len(res) > 50): break
+                char_nuevo = self.int_to_char[siguiente_idx]
+                
+                res += char_nuevo
+                indices_contexto.append(siguiente_idx)
+                
+                # Mantener buffer de contexto manejable
+                if len(indices_contexto) > 20:
+                    indices_contexto.pop(0)
+
+                if char_nuevo in ".\n" or (char_nuevo == " " and len(res) > 50): break
             return res
 
     def guardar(self, archivo):
@@ -250,6 +328,21 @@ class RedCrecimientoInfinito:
         
         red.interacciones = d.get('interacciones', 0)
         red.caracteres_totales = d.get('caracteres_totales', 0)
+        
+        # Forzar float32 para optimización
+        red.w_eo = red.w_eo.astype(np.float32)
+        red.w_os = red.w_os.astype(np.float32)
+        red.b_o = red.b_o.astype(np.float32)
+        red.b_s = red.b_s.astype(np.float32)
+        red.m_w_eo = red.m_w_eo.astype(np.float32)
+        red.v_w_eo = red.v_w_eo.astype(np.float32)
+        red.m_w_os = red.m_w_os.astype(np.float32)
+        red.v_w_os = red.v_w_os.astype(np.float32)
+        red.m_b_o = red.m_b_o.astype(np.float32)
+        red.v_b_o = red.v_b_o.astype(np.float32)
+        red.m_b_s = red.m_b_s.astype(np.float32)
+        red.v_b_s = red.v_b_s.astype(np.float32)
+        
         return red
 
 if __name__ == "__main__":

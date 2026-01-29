@@ -146,102 +146,100 @@ class BrainManager:
         return np.mean(probs) if probs else 0
     
     def process_message(self, texto, signals):
-        """Procesa un mensaje del usuario"""
+        """Procesa un mensaje del usuario con soporte para etiquetas @"""
+        # Detectar etiquetas en el texto
+        tags = []
+        if "@melchor" in texto.lower(): tags.append("MELCHOR")
+        if "@gaspar" in texto.lower(): tags.append("GASPAR")
+        if "@casper" in texto.lower(): tags.append("CASPER")
+        
+        # Limpiar etiquetas del texto para el procesamiento de la IA si es necesario
+        texto_limpio = texto
+        for tag in ["@melchor", "@gaspar", "@casper"]:
+            texto_limpio = texto_limpio.replace(tag, "").replace(tag.upper(), "").strip()
+
         # Mostrar animación de pensamiento
         signals.pensando.emit(True)
         
+        # Filtrar cerebros activos que deben responder
+        brains_to_respond = []
+        activos = self.get_active_brains()
+        
+        if tags:
+            # Solo los cerebros etiquetados que estén activos
+            brains_to_respond = [b for b in activos if b[2] in tags]
+            if not brains_to_respond:
+                signals.pensando.emit(False)
+                signals.respuesta_lista.emit("SISTEMA", f"⚠️ Los cerebros {', '.join(tags)} no están activos.")
+                return
+        else:
+            # Si no hay tags, todos los activos participan (comportamiento normal)
+            brains_to_respond = activos
+
+        if not brains_to_respond:
+            signals.pensando.emit(False)
+            signals.respuesta_lista.emit("SISTEMA", "⚠️ No hay cerebros activos para responder.")
+            return
+
         max_intentos = 5
         respuesta_final = ""
         
+        # Si solo hay un cerebro objetivo, no hay votación, responde él directamente
+        if len(brains_to_respond) == 1:
+            ia, path, nombre = brains_to_respond[0]
+            respuesta_final = ia.generar_respuesta(texto_limpio)
+            signals.pensando.emit(False)
+            signals.respuesta_lista.emit(nombre, respuesta_final)
+            
+            # Solo aprende el cerebro objetivo
+            ia.aprender(texto_limpio)
+            ia.aprender(respuesta_final, epocas=1)
+            ia.guardar(path)
+            return
+
+        # Si hay varios, hay proceso de votación/consenso
         for i in range(max_intentos):
-            # Generar propuesta con el primer cerebro activo
-            if self.melchor_activo:
-                propuesta = self.ia_melchor.generar_respuesta(texto)
-            elif self.gaspar_activo:
-                propuesta = self.ia_gaspar.generar_respuesta(texto)
-            elif self.casper_activo:
-                propuesta = self.ia_casper.generar_respuesta(texto)
-            else:
-                signals.pensando.emit(False)
-                signals.respuesta_lista.emit("SISTEMA", "⚠️ No hay cerebros activos para generar respuesta")
-                return
+            # Generar propuesta (usamos el primero de la lista de respuesta)
+            ia_prop, _, _ = brains_to_respond[0]
+            propuesta = ia_prop.generar_respuesta(texto_limpio)
             
-            # Votar
+            # Votar entre los cerebros involucrados
             votos = []
-            
-            if self.melchor_activo:
-                voto = self.evaluar_texto(self.ia_melchor, propuesta) > 0.1
+            for ia, _, nombre in brains_to_respond:
+                umbral = 0.1 if nombre == "MELCHOR" else 0.08
+                voto = self.evaluar_texto(ia, propuesta) > umbral
                 votos.append(voto)
             
-            if self.gaspar_activo:
-                voto = self.evaluar_texto(self.ia_gaspar, propuesta) > 0.08
-                votos.append(voto)
-            
-            if self.casper_activo:
-                voto = self.evaluar_texto(self.ia_casper, propuesta) > 0.08
-                if np.random.rand() < 0.05:
-                    voto = False
-                votos.append(voto)
-            
-            # Votante anónimo
-            if self.votante_anonimo_activo:
+            # Votante anónimo (solo si no hay tags específicos)
+            if self.votante_anonimo_activo and not tags:
                 voto_anonimo = np.random.rand() > 0.5
-                voto_texto = "✅ APRUEBA" if voto_anonimo else "❌ RECHAZA"
-                signals.respuesta_lista.emit("ANÓNIMO", f"🎲 {voto_texto} (voto aleatorio)")
                 votos.append(voto_anonimo)
-            
-            # Verificar unanimidad
-            if len(votos) == 0:
-                signals.pensando.emit(False)
-                signals.respuesta_lista.emit("SISTEMA", "⚠️ No hay cerebros activos para votar")
-                return
             
             if sum(votos) == len(votos):  # Unanimidad
                 respuesta_final = propuesta
                 signals.pensando.emit(False)
+                nombres_votos = [b[2] for b in brains_to_respond]
+                if self.votante_anonimo_activo and not tags: nombres_votos.append("ANÓNIMO")
                 
-                # Construir mensaje
-                cerebros_activos = []
-                if self.melchor_activo:
-                    cerebros_activos.append("MELCHOR")
-                if self.gaspar_activo:
-                    cerebros_activos.append("GASPAR")
-                if self.casper_activo:
-                    cerebros_activos.append("CASPER")
-                if self.votante_anonimo_activo:
-                    cerebros_activos.append("ANÓNIMO")
-                
-                consenso_msg = f"[UNANIMIDAD: {', '.join(cerebros_activos)}]"
+                consenso_msg = f"[UNANIMIDAD: {', '.join(nombres_votos)}]"
                 signals.respuesta_lista.emit("MAGI", f"{consenso_msg} {respuesta_final}")
                 break
             else:
-                time.sleep(0.5)
+                time.sleep(0.3)
         
-        # Si no hay unanimidad
+        # Fallback si no hay unanimidad
         if not respuesta_final:
-            if self.melchor_activo:
-                respuesta_final = self.ia_melchor.generar_respuesta(texto)
-            elif self.gaspar_activo:
-                respuesta_final = self.ia_gaspar.generar_respuesta(texto)
-            elif self.casper_activo:
-                respuesta_final = self.ia_casper.generar_respuesta(texto)
-            
+            ia_fallback, _, _ = brains_to_respond[0]
+            respuesta_final = ia_fallback.generar_respuesta(texto_limpio)
             signals.pensando.emit(False)
-            
-            cerebros_activos = []
-            if self.melchor_activo:
-                cerebros_activos.append("MELCHOR")
-            if self.gaspar_activo:
-                cerebros_activos.append("GASPAR")
-            if self.casper_activo:
-                cerebros_activos.append("CASPER")
-            if self.votante_anonimo_activo:
-                cerebros_activos.append("ANÓNIMO")
-            
-            mayoria_msg = f"[MAYORÍA: {', '.join(cerebros_activos)}]"
+            nombres_votos = [b[2] for b in brains_to_respond]
+            if self.votante_anonimo_activo and not tags: nombres_votos.append("ANÓNIMO")
+            mayoria_msg = f"[MAYORÍA: {', '.join(nombres_votos)}]"
             signals.respuesta_lista.emit("MAGI", f"{mayoria_msg} {respuesta_final}")
         
-            ia.aprender(texto)
+        # Entrenar solo a los cerebros que participaron
+        for ia, path, _ in brains_to_respond:
+            ia.aprender(texto_limpio)
             ia.aprender(respuesta_final, epocas=1)
             ia.guardar(path)
 
@@ -271,13 +269,20 @@ class BrainManager:
         # Generar respuesta
         respuesta = ia_obj.generar_respuesta(texto)
         
-        # Aprender del mensaje anterior
-        ia_obj.aprender(texto)
-        ia_obj.aprender(respuesta, epocas=1)
-        ia_obj.guardar(ia_path)
+        # En modo debate, TAMBIÉN aprenden todos los cerebros activos
+        # para que la experiencia sea compartida y evolucionen juntos
+        for ia, path, _ in self.get_active_brains():
+            ia.aprender(texto)
+            ia.aprender(respuesta, epocas=1)
+            ia.guardar(path)
         
         signals.pensando.emit(False)
         signals.respuesta_lista.emit(brain_name, respuesta)
+        
+        # Opcional: Notificar que todos han aprendido (para que el usuario lo sepa)
+        activos = [n for _, _, n in self.get_active_brains()]
+        if len(activos) > 1:
+            signals.respuesta_lista.emit("SISTEMA", f"🧠 Aprendizaje compartido: {', '.join(activos)}")
     
     def train_massive(self, texto, signals):
         """Entrenamiento masivo"""

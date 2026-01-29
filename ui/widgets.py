@@ -11,6 +11,8 @@ class MessageWidget(QWidget):
     
     def __init__(self, author, text, is_ai=False):
         super().__init__()
+        from PySide6.QtWidgets import QSizePolicy
+        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         
         # Reconocer si es un mensaje de estadísticas
         is_stats = author == "ESTADÍSTICAS"
@@ -58,6 +60,9 @@ class MessageWidget(QWidget):
             elif author == "CASPER":
                 avatar_label.setText("CA")
                 avatar_label.setStyleSheet("border-radius: 6px; background-color: #6366f1; color: white;")
+            elif author == "WIKIPEDIA":
+                avatar_label.setText("W")
+                avatar_label.setStyleSheet("border-radius: 6px; background-color: #0ea5e9; color: white;")
             elif is_mic_message:
                 avatar_label.setText("MI")
                 avatar_label.setStyleSheet("border-radius: 6px; background-color: #3b82f6; color: white;")
@@ -81,6 +86,7 @@ class MessageWidget(QWidget):
         elif author == "MELCHOR": accent = '#ef4444'
         elif author == "GASPAR": accent = '#10b981'
         elif author == "CASPER": accent = '#6366f1'
+        elif author == "WIKIPEDIA": accent = '#0ea5e9'
         elif is_ai: accent = '#10b981'
         else: accent = '#a5b4fc'
         
@@ -105,6 +111,10 @@ class ThinkingWidget(QWidget):
     
     def __init__(self):
         super().__init__()
+        from PySide6.QtWidgets import QSizePolicy
+        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        self.setFixedHeight(80) # Altura fija para el widget de pensamiento para evitar saltos
+        
         self.main_layout = QHBoxLayout(self)
         self.main_layout.setContentsMargins(50, 10, 50, 10)
         

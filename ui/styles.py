@@ -112,13 +112,77 @@ MASSIVE_INPUT_STYLE = """
 USER_INPUT_STYLE = """
     QFrame {
         background-color: #1f2937; 
-        border: 1px solid #374151; 
-        border-radius: 20px;
+        border: 2px solid #374151; 
+        border-radius: 24px;
     }
     QFrame:hover {
-        border: 1px solid #4b5563;
+        border: 2px solid #4f46e5;
+        background-color: #111827;
     }
 """
+
+TAB_WIDGET_STYLE = """
+    QTabWidget::pane {
+        border-top: 1px solid #2d3748;
+        background: transparent;
+    }
+    QTabBar::tab {
+        background: transparent;
+        color: #94a3b8;
+        padding: 10px;
+        font-size: 11px;
+        font-weight: bold;
+        letter-spacing: 1px;
+        border-bottom: 2px solid transparent;
+        min-width: 60px;
+    }
+    QTabBar::tab:selected {
+        color: #6366f1;
+        border-bottom: 2px solid #6366f1;
+    }
+    QTabBar::tab:hover {
+        background: #1f2937;
+        color: white;
+    }
+"""
+
+BRAIN_CARD_STYLE = """
+    QFrame#BrainCard {
+        background-color: #1f2937;
+        border: 1px solid #374151;
+        border-radius: 12px;
+        padding: 5px;
+    }
+    QFrame#BrainCard:hover {
+        border: 1px solid #4b5563;
+        background-color: #262a38;
+    }
+    QLabel#BrainName {
+        font-weight: bold;
+        color: #f8fafc;
+        font-size: 12px;
+    }
+    QLabel#BrainNeurons {
+        color: #94a3b8;
+        font-size: 10px;
+        font-family: 'Menlo', 'Monaco', monospace;
+    }
+"""
+
+ACTION_RIBBON_BTN_STYLE = """
+    QPushButton {
+        background-color: #1f2937;
+        border: 1px solid #374151;
+        border-radius: 8px;
+        padding: 8px;
+        font-size: 14px;
+    }
+    QPushButton:hover {
+        background-color: #374151;
+        border: 1px solid #6366f1;
+    }
+"""
+
 
 SEND_BUTTON_STYLE = """
     QPushButton { 
@@ -240,6 +304,30 @@ DEBATE_SWITCH_STYLE = """
     }
 """
 
+WIKI_SWITCH_STYLE = """
+    QCheckBox {
+        color: #94a3b8;
+        font-size: 11px;
+        spacing: 8px;
+        font-weight: 500;
+    }
+    QCheckBox::indicator {
+        width: 40px;
+        height: 20px;
+        border-radius: 10px;
+        background-color: #374151;
+        border: 2px solid #4b5563;
+    }
+    QCheckBox::indicator:checked {
+        background-color: #0ea5e9;
+        border: 2px solid #0ea5e9;
+    }
+    QCheckBox::indicator:hover {
+        border: 2px solid #6b7280;
+    }
+"""
+
+
 
 
 LOAD_BRAIN_BUTTON_STYLE = """
@@ -263,6 +351,25 @@ TOGGLE_SIDEBAR_STYLE = """
         color: white;
         background-color: #1f2937;
         border-radius: 4px;
+    }
+"""
+
+NOTIFICATION_AREA_STYLE = """
+    QFrame#NotificationArea {
+        background-color: #111827;
+        border-bottom: 1px solid #1e293b;
+        min-height: 32px;
+        max-height: 32px;
+    }
+"""
+
+NOTIFICATION_LABEL_STYLE = """
+    QLabel#NotificationLabel {
+        color: #10b981;
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.5px;
+        padding-left: 10px;
     }
 """
 

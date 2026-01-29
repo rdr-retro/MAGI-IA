@@ -12,10 +12,12 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                              QHBoxLayout, QTextEdit, QLineEdit, QPushButton, 
                              QLabel, QFileDialog, QFrame, QProgressBar, QScrollArea,
-                             QCheckBox)
-from PySide6.QtCore import Qt, Slot, QSize, QMetaObject, Q_ARG, QTimer
+                             QCheckBox, QTabWidget, QGridLayout)
+from PySide6.QtCore import Qt, Slot, QSize, QMetaObject, Q_ARG, QTimer, QPropertyAnimation, QEasingCurve
 from PySide6.QtGui import QFont, QPixmap, QMovie
 import numpy as np
+import requests
+import random
 
 # Importar módulos locales
 from core.signals import IAWorkerSignals
@@ -35,6 +37,7 @@ class MAGISystem(QMainWindow):
         super().__init__()
         self.setWindowTitle("MAGI SYSTEM (Supercomputer)")
         self.resize(1200, 900)
+        self.setMinimumSize(900, 600)
         
         # Inicializar gestor de cerebros
         self.brain_manager = BrainManager()
@@ -46,14 +49,24 @@ class MAGISystem(QMainWindow):
         # Estado
         self.escuchando = False
         self.buffer_voz = ""
+        self.debate_activo = False
         self.ultima_respuesta_magi = ""
         self.debate_turn = 0 # 0=Melchor, 1=Gaspar, 2=Casper
+        self.chat_history = [] # Memoria a corto plazo (últimos mensajes)
+        self.wiki_activo = False
+        self.wiki_dialogo = False
+        self.wiki_identity = False
+        self.wiki_timer = QTimer()
+        self.wiki_timer.timeout.connect(self.fetch_wiki_knowledge)
         
         # Crear interfaz
         self.init_ui()
         
         # Conectar señales
         self.connect_signals()
+        
+        # Inyectar Definición de Identidades (Identity Charter) tras 5 segundos
+        QTimer.singleShot(5000, self.inyectar_charter_identidad)
         
         # Configurar callbacks de expansión
         self.brain_manager.set_expansion_callbacks(
@@ -71,13 +84,10 @@ class MAGISystem(QMainWindow):
         self.signals.entrenamiento_terminado.connect(
             lambda: self.agregar_mensaje("SISTEMA", "Sincronización finalizada.")
         )
-        self.signals.cerebro_expandido.connect(
-            # Corregido: Las estadísticas ahora tienen su propio perfil con estrella
-            lambda name, n: self.agregar_mensaje("ESTADÍSTICAS", f"{name} ha crecido a {n} neuronas.")
-        )
-        self.signals.progreso_entrenamiento.connect(self.barra_progreso.setValue)
-        self.signals.texto_transcrito.connect(self.cargar_texto_transcrito)
         self.signals.pensando.connect(self.toggle_thinking_animation)
+        self.signals.cerebro_expandido.connect(self.on_brain_expanded)
+        self.signals.progreso_entrenamiento.connect(self.actualizar_progreso)
+        self.signals.texto_transcrito.connect(self.cargar_texto_transcrito)
     
     def init_ui(self):
         """Inicializa la interfaz de usuario"""
@@ -94,14 +104,14 @@ class MAGISystem(QMainWindow):
         self.sidebar = self.create_sidebar()
         chat_area = self.create_chat_area()
         
-        main_layout.addWidget(self.sidebar)
-        main_layout.addWidget(chat_area)
+        main_layout.addWidget(self.sidebar, 0)
+        main_layout.addWidget(chat_area, 1)
     
     def create_sidebar(self):
         """Crea el panel lateral"""
         side_panel = QFrame()
         side_panel.setObjectName("SidePanel")
-        side_panel.setFixedWidth(240)
+        side_panel.setFixedWidth(300)
         side_layout = QVBoxLayout(side_panel)
         side_layout.setContentsMargins(10, 15, 10, 10)
         side_layout.setSpacing(8)
@@ -109,26 +119,38 @@ class MAGISystem(QMainWindow):
         # Logo
         self.add_logo(side_layout)
         
-        # Animación ADN
-        self.add_adn_animation(side_layout)
+        # Tabs container
+        self.tabs = QTabWidget()
+        self.tabs.setStyleSheet(styles.TAB_WIDGET_STYLE)
         
-        # Sección de entrenamiento
-        self.add_training_section(side_layout)
+        # 1. Dashboard Tab
+        self.dashboard_tab = QWidget()
+        self.create_dashboard_tab(self.dashboard_tab)
+        self.tabs.addTab(self.dashboard_tab, "DASH")
         
-        # Separador
+        # 2. Training Tab
+        self.training_tab = QWidget()
+        self.create_training_tab(self.training_tab)
+        self.tabs.addTab(self.training_tab, "TRAIN")
+        
+        # 3. Network Tab
+        self.network_tab = QWidget()
+        self.create_network_tab(self.network_tab)
+        self.tabs.addTab(self.network_tab, "NET")
+        
+        side_layout.addWidget(self.tabs)
+        
+        # Barra de progreso (siempre visible abajo)
         self.add_separator(side_layout)
         
-        # Estado de cerebros
-        self.add_brain_status_section(side_layout)
+        # Label de progreso
+        self.lbl_progreso = QLabel("Ready")
+        self.lbl_progreso.setStyleSheet("color: #94a3b8; font-size: 9px; font-weight: 500;")
+        self.lbl_progreso.setAlignment(Qt.AlignCenter)
+        side_layout.addWidget(self.lbl_progreso)
         
-        # Votante anónimo
-        self.add_anonimo_section(side_layout)
-        
-        # Modo Debate
-        self.add_debate_section(side_layout)
-        
-        # Barra de progreso
         self.barra_progreso = QProgressBar()
+        self.barra_progreso.setTextVisible(False)
         side_layout.addWidget(self.barra_progreso)
         
         side_layout.addStretch()
@@ -150,6 +172,7 @@ class MAGISystem(QMainWindow):
         if not logo_pixmap.isNull():
             logo_label.setPixmap(logo_pixmap.scaled(180, 70, Qt.KeepAspectRatio, Qt.SmoothTransformation))
             logo_label.setAlignment(Qt.AlignCenter)
+            logo_label.setFixedHeight(70) # Altura fija para evitar saltos
             layout.addWidget(logo_label)
     
     def add_adn_animation(self, layout):
@@ -161,60 +184,11 @@ class MAGISystem(QMainWindow):
         if self.adn_movie.isValid():
             self.adn_label.setMovie(self.adn_movie)
             self.adn_label.setAlignment(Qt.AlignCenter)
-            self.adn_label.setMaximumHeight(150)
+            self.adn_label.setFixedSize(180, 150) # Tamaño fijo riguroso
             self.adn_movie.setScaledSize(QSize(180, 150))
             layout.addWidget(self.adn_label)
             self.adn_movie.start()
-    
-    def add_training_section(self, layout):
-        """Agrega la sección de entrenamiento"""
-        # Título
-        training_label = QLabel("BULK TRAINING")
-        training_label.setStyleSheet("color: #10b981; font-weight: bold; font-size: 11px; padding: 3px 0; letter-spacing: 1px;")
-        layout.addWidget(training_label)
-        
-        # Área de texto masivo
-        self.massive_input = QTextEdit()
-        self.massive_input.setPlaceholderText("Paste large text here for training...")
-        self.massive_input.setStyleSheet(styles.MASSIVE_INPUT_STYLE)
-        self.massive_input.setMaximumHeight(100)
-        self.massive_input.setMinimumHeight(60)
-        layout.addWidget(self.massive_input)
-        
-        # Botón de entrenar
-        btn_train = QPushButton("Train Now")
-        btn_train.setObjectName("TrainBtn")
-        btn_train.setStyleSheet(styles.TRAIN_BUTTON_STYLE)
-        btn_train.setMaximumHeight(32)
-        btn_train.clicked.connect(self.entrenar_masivo)
-        layout.addWidget(btn_train)
-        
-        # Botón de dormir (consolidación de memoria)
-        btn_sleep = QPushButton("💤 Sleep Mode")
-        btn_sleep.setObjectName("SleepBtn")
-        btn_sleep.setStyleSheet(styles.SLEEP_BUTTON_STYLE)
-        btn_sleep.setMaximumHeight(32)
-        btn_sleep.clicked.connect(self.dormir_cerebros)
-        layout.addWidget(btn_sleep)
-        
-        # Botones de carga
-        buttons = [
-            ("📄 Text", self.abrir_txt),
-            ("📁 TXT Folder", self.abrir_carpeta_txt),
-            ("📕 PDF", self.abrir_pdf),
-            ("🎬 Video", self.abrir_mp4),
-            ("📂 Video Folder", self.abrir_carpeta_videos)
-        ]
-        
-        for text, handler in buttons:
-            btn = QPushButton(text)
-            btn.setObjectName("SecondaryBtn")
-            btn.setMaximumHeight(28)
-            btn.clicked.connect(handler)
-            layout.addWidget(btn)
-        
-        layout.addSpacing(5)
-    
+
     def add_separator(self, layout):
         """Agrega un separador"""
         separator = QFrame()
@@ -222,110 +196,230 @@ class MAGISystem(QMainWindow):
         separator.setStyleSheet("background-color: #3e3f4b; max-height: 1px;")
         layout.addWidget(separator)
         layout.addSpacing(5)
-    
-    def add_brain_status_section(self, layout):
-        """Agrega la sección de estado de cerebros"""
-        stats_label = QLabel("📟 MAGI STATUS")
-        stats_label.setStyleSheet("color: #10b981; font-weight: bold; font-size: 11px; padding: 3px 0; letter-spacing: 1px;")
-        layout.addWidget(stats_label)
+
+    def create_dashboard_tab(self, widget):
+        """Crea el contenido de la pestaña Dashboard"""
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(0, 10, 0, 0)
         
-        # Crear controles para cada cerebro
-        self.brain_controls = {}
-        for brain_name in ["melchor", "gaspar", "casper"]:
-            control = self.create_brain_control(brain_name)
-            layout.addWidget(control)
+        # Animación ADN
+        self.add_adn_animation(layout)
         
-        # Peso total
+        # Estadísticas generales
+        stats_group = QFrame()
+        stats_group.setStyleSheet("background-color: #111827; border-radius: 10px; padding: 10px;")
+        stats_layout = QVBoxLayout(stats_group)
+        
+        stats_title = QLabel("SYSTEM METRICS")
+        stats_title.setStyleSheet("color: #6366f1; font-weight: bold; font-size: 10px; letter-spacing: 1px;")
+        stats_layout.addWidget(stats_title)
+        
         self.lbl_peso = QLabel("💾 Memory: 0.00 MB")
         self.lbl_peso.setObjectName("StatLabel")
-        layout.addWidget(self.lbl_peso)
+        stats_layout.addWidget(self.lbl_peso)
         
-        layout.addSpacing(5)
-    
-    def create_brain_control(self, brain_name):
-        """Crea un control para un cerebro"""
-        container = QWidget()
-        layout = QHBoxLayout(container)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(6)
+        # Neuronas de cada cerebro
+        self.lbl_melchor_neurons = QLabel("🔴 Melchor: 0 neurons")
+        self.lbl_melchor_neurons.setObjectName("StatLabel")
+        stats_layout.addWidget(self.lbl_melchor_neurons)
         
-        # Checkbox
-        checkbox = QCheckBox()
-        checkbox.setChecked(True)
-        checkbox.setFixedSize(16, 16)
-        checkbox.setStyleSheet(styles.CHECKBOX_STYLE)
-        checkbox.stateChanged.connect(lambda state: self.brain_manager.toggle_brain(brain_name, state == 2))
-        checkbox.stateChanged.connect(lambda state: self.on_brain_toggled(brain_name, state == 2))
-        layout.addWidget(checkbox)
+        self.lbl_gaspar_neurons = QLabel("🟢 Gaspar: 0 neurons")
+        self.lbl_gaspar_neurons.setObjectName("StatLabel")
+        stats_layout.addWidget(self.lbl_gaspar_neurons)
         
-        # Label
-        brain_ia = getattr(self.brain_manager, f"ia_{brain_name}")
-        label = QLabel(f"🟢 {brain_name.upper()}: {brain_ia.n_oculta}")
-        label.setObjectName("StatLabel")
-        label.setStyleSheet("font-size: 10px;")
-        layout.addWidget(label, 1)
+        self.lbl_casper_neurons = QLabel("🔵 Casper: 0 neurons")
+        self.lbl_casper_neurons.setObjectName("StatLabel")
+        stats_layout.addWidget(self.lbl_casper_neurons)
         
-        # Botón de carga
-        btn_load = QPushButton("📂")
-        btn_load.setFixedSize(20, 20)
-        btn_load.setToolTip(f"Load {brain_name.upper()}")
-        btn_load.setStyleSheet(styles.LOAD_BRAIN_BUTTON_STYLE)
-        btn_load.clicked.connect(lambda: self.cargar_cerebro_externo(brain_name))
-        layout.addWidget(btn_load)
+        self.lbl_uptime = QLabel("⏱️ Uptime: Stable")
+        self.lbl_uptime.setObjectName("StatLabel")
+        stats_layout.addWidget(self.lbl_uptime)
         
-        # Guardar referencias
-        self.brain_controls[brain_name] = {
-            'checkbox': checkbox,
-            'label': label
-        }
+        layout.addWidget(stats_group)
+        layout.addStretch()
+
+    def create_training_tab(self, widget):
+        """Crea el contenido de la pestaña Entrenamiento"""
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(0, 10, 0, 0)
         
-        return container
-    
-    def add_anonimo_section(self, layout):
-        """Agrega la sección del votante anónimo"""
-        self.add_separator(layout)
+        # Área de texto masivo
+        self.massive_input = QTextEdit()
+        self.massive_input.setPlaceholderText("Paste massive data here...")
+        self.massive_input.setStyleSheet(styles.MASSIVE_INPUT_STYLE)
+        self.massive_input.setMaximumHeight(150)
+        layout.addWidget(self.massive_input)
         
-        # Título
-        anonimo_label = QLabel("👤 ANÓNIMO")
-        anonimo_label.setStyleSheet("color: #a855f7; font-weight: bold; font-size: 11px; padding: 3px 0; letter-spacing: 1px;")
-        layout.addWidget(anonimo_label)
+        # Botones principales
+        btn_train = QPushButton("PROCESS DATA")
+        btn_train.setObjectName("TrainBtn")
+        btn_train.setStyleSheet(styles.TRAIN_BUTTON_STYLE)
+        btn_train.clicked.connect(self.entrenar_masivo)
+        layout.addWidget(btn_train)
         
-        # Switch
-        self.switch_anonimo = QCheckBox("Activar Votante")
+        btn_sleep = QPushButton("💤 DEEP SLEEP")
+        btn_sleep.setObjectName("SleepBtn")
+        btn_sleep.setStyleSheet(styles.SLEEP_BUTTON_STYLE)
+        btn_sleep.clicked.connect(self.dormir_cerebros)
+        layout.addWidget(btn_sleep)
+        
+        # Ribbon de carga de archivos (Cuadrícula)
+        ribbon_label = QLabel("IMPORT SOURCES")
+        ribbon_label.setStyleSheet("color: #94a3b8; font-weight: bold; font-size: 10px; margin-top: 5px;")
+        layout.addWidget(ribbon_label)
+        
+        ribbon_container = QWidget()
+        ribbon_grid = QGridLayout(ribbon_container)
+        ribbon_grid.setContentsMargins(0, 0, 0, 0)
+        ribbon_grid.setSpacing(5)
+        
+        buttons = [
+            ("📄", "Load .txt file\nSupports UTF-8 encoding", self.abrir_txt, 0, 0),
+            ("📁", "Batch process TXT folder\nSupports nested directories", self.abrir_carpeta_txt, 0, 1),
+            ("📕", "Extract text from PDF\nMax 500 pages recommended", self.abrir_pdf, 0, 2),
+            ("🎬", "Transcribe audio with Whisper\nFormats: mp4, mkv, wav, mp3", self.abrir_mp4, 1, 0),
+            ("📂", "Batch transcribe videos\nMay take several minutes", self.abrir_carpeta_videos, 1, 1),
+        ]
+        
+        for icon, tooltip, handler, r, c in buttons:
+            btn = QPushButton(icon)
+            btn.setToolTip(tooltip)
+            btn.setStyleSheet(styles.ACTION_RIBBON_BTN_STYLE)
+            btn.clicked.connect(handler)
+            btn.setFixedSize(50, 50)  # Tamaño uniforme
+            ribbon_grid.addWidget(btn, r, c)
+            
+        layout.addWidget(ribbon_container)
+        layout.addStretch()
+
+    def create_network_tab(self, widget):
+        """Crea el contenido de la pestaña Red/Cerebros"""
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(0, 10, 0, 0)
+        
+        # Brain Status Title
+        label = QLabel("NEURAL CORES")
+        label.setStyleSheet("color: #10b981; font-weight: bold; font-size: 10px; letter-spacing: 1px;")
+        layout.addWidget(label)
+        
+        # Brain Cards
+        self.brain_controls = {}
+        for brain_name in ["melchor", "gaspar", "casper"]:
+            card = self.create_brain_card(brain_name)
+            layout.addWidget(card)
+            
+        # Logic Controls
+        logic_label = QLabel("ADVANCED LOGIC")
+        logic_label.setStyleSheet("color: #f8fafc; font-weight: bold; font-size: 10px; margin-top: 10px; border-top: 1px solid #3e3f4b; padding-top: 10px;")
+        layout.addWidget(logic_label)
+        
+        # Votante
+        self.switch_anonimo = QCheckBox("Anon. Voting")
         self.switch_anonimo.setStyleSheet(styles.ANONIMO_SWITCH_STYLE)
         self.switch_anonimo.stateChanged.connect(self.toggle_votante_anonimo)
         layout.addWidget(self.switch_anonimo)
         
-        # Estado
         self.lbl_anonimo = QLabel("⚫ INACTIVO")
         self.lbl_anonimo.setObjectName("StatLabel")
-        self.lbl_anonimo.setStyleSheet("color: #6b7280; font-size: 10px; font-style: italic;")
+        self.lbl_anonimo.setStyleSheet("color: #6b7280; font-size: 9px; font-style: italic; margin-bottom: 5px;")
         layout.addWidget(self.lbl_anonimo)
         
-        layout.addSpacing(3)
-        
-    def add_debate_section(self, layout):
-        """Agrega la sección de modo debate"""
-        self.add_separator(layout)
-        
-        # Título
-        debate_label = QLabel("🔥 DEBATE MODE")
-        debate_label.setStyleSheet("color: #f43f5e; font-weight: bold; font-size: 11px; padding: 3px 0; letter-spacing: 1px;")
-        layout.addWidget(debate_label)
-        
-        # Switch
-        self.switch_debate = QCheckBox("Auto-Deliberación")
+        # Debate
+        self.switch_debate = QCheckBox("Auto-Debate")
         self.switch_debate.setStyleSheet(styles.DEBATE_SWITCH_STYLE)
         self.switch_debate.stateChanged.connect(self.toggle_modo_debate)
         layout.addWidget(self.switch_debate)
         
-        # Estado
         self.lbl_debate_status = QLabel("⚫ INACTIVO")
         self.lbl_debate_status.setObjectName("StatLabel")
-        self.lbl_debate_status.setStyleSheet("color: #6b7280; font-size: 10px; font-style: italic;")
+        self.lbl_debate_status.setStyleSheet("color: #6b7280; font-size: 9px; font-style: italic; margin-bottom: 5px;")
         layout.addWidget(self.lbl_debate_status)
         
-        layout.addSpacing(3)
+        # Wiki
+        self.switch_wiki = QCheckBox("Wiki Inject")
+        self.switch_wiki.setStyleSheet(styles.WIKI_SWITCH_STYLE)
+        self.switch_wiki.stateChanged.connect(self.toggle_wiki_mode)
+        layout.addWidget(self.switch_wiki)
+        
+        self.lbl_wiki_status = QLabel("⚫ INACTIVO")
+        self.lbl_wiki_status.setObjectName("StatLabel")
+        self.lbl_wiki_status.setStyleSheet("color: #6b7280; font-size: 9px; font-style: italic; margin-bottom: 5px;")
+        layout.addWidget(self.lbl_wiki_status)
+
+        # Wiki Dialogue
+        self.switch_wiki_dialogue = QCheckBox("Wiki Dialogue")
+        self.switch_wiki_dialogue.setStyleSheet(styles.WIKI_SWITCH_STYLE) # Reusing wiki style
+        self.switch_wiki_dialogue.stateChanged.connect(self.toggle_wiki_dialogue)
+        layout.addWidget(self.switch_wiki_dialogue)
+
+        self.lbl_wiki_dialogue_status = QLabel("⚫ INACTIVO")
+        self.lbl_wiki_dialogue_status.setObjectName("StatLabel")
+        self.lbl_wiki_dialogue_status.setStyleSheet("color: #6b7280; font-size: 9px; font-style: italic; margin-bottom: 5px;")
+        layout.addWidget(self.lbl_wiki_dialogue_status)
+
+        # Wiki Identity
+        self.switch_wiki_identity = QCheckBox("Wiki Identity")
+        self.switch_wiki_identity.setStyleSheet(styles.WIKI_SWITCH_STYLE)
+        self.switch_wiki_identity.stateChanged.connect(self.toggle_wiki_identity)
+        layout.addWidget(self.switch_wiki_identity)
+
+        self.lbl_wiki_identity_status = QLabel("⚫ INACTIVO")
+        self.lbl_wiki_identity_status.setObjectName("StatLabel")
+        self.lbl_wiki_identity_status.setStyleSheet("color: #6b7280; font-size: 9px; font-style: italic; margin-bottom: 5px;")
+        layout.addWidget(self.lbl_wiki_identity_status)
+        
+        layout.addStretch()
+
+    def create_brain_card(self, brain_name):
+        """Crea una tarjeta visual para un cerebro"""
+        card = QFrame()
+        card.setObjectName("BrainCard")
+        card.setStyleSheet(styles.BRAIN_CARD_STYLE)
+        card_layout = QHBoxLayout(card)
+        card_layout.setContentsMargins(10, 8, 10, 8)
+        
+        # Izquierda: Checkbox
+        checkbox = QCheckBox()
+        checkbox.setChecked(True)
+        checkbox.setFixedSize(16, 16)
+        checkbox.setStyleSheet(styles.CHECKBOX_STYLE)
+        checkbox.stateChanged.connect(lambda state, b=brain_name: self.brain_manager.toggle_brain(b, state == 2))
+        checkbox.stateChanged.connect(lambda state, b=brain_name: self.on_brain_toggled(b, state == 2))
+        card_layout.addWidget(checkbox)
+        
+        # Centro: Info
+        info_layout = QVBoxLayout()
+        info_layout.setSpacing(2)
+        
+        name_label = QLabel(brain_name.upper())
+        name_label.setObjectName("BrainName")
+        info_layout.addWidget(name_label)
+        
+        brain_ia = getattr(self.brain_manager, f"ia_{brain_name}")
+        neurons_label = QLabel(f"Neurons: {brain_ia.n_oculta}")
+        neurons_label.setObjectName("BrainNeurons")
+        info_layout.addWidget(neurons_label)
+        
+        card_layout.addLayout(info_layout, 1)
+        
+        # Derecha: Botón Load
+        btn_load = QPushButton("📂")
+        btn_load.setFixedSize(24, 24)
+        btn_load.setToolTip(f"Load external {brain_name.upper()} brain (.pkl)")
+        btn_load.setStyleSheet(styles.LOAD_BRAIN_BUTTON_STYLE)
+        btn_load.clicked.connect(lambda checked=False, b=brain_name: self.cargar_cerebro_externo(b))
+        card_layout.addWidget(btn_load)
+        
+        # Guardar referencias
+        self.brain_controls[brain_name] = {
+            'checkbox': checkbox,
+            'label': neurons_label,
+            'card': card,
+            'name_label': name_label
+        }
+        
+        return card
+
     
     def create_chat_area(self):
         """Crea el área de chat"""
@@ -363,6 +457,25 @@ class MAGISystem(QMainWindow):
         header_layout.addWidget(spacer)
         
         chat_vbox.addWidget(header)
+        
+        # Notification Area (Ticker)
+        self.notification_area = QFrame()
+        self.notification_area.setObjectName("NotificationArea")
+        self.notification_area.setStyleSheet(styles.NOTIFICATION_AREA_STYLE)
+        notification_layout = QHBoxLayout(self.notification_area)
+        notification_layout.setContentsMargins(15, 0, 15, 0)
+        
+        self.lbl_notification = QLabel("IDLE - System ready")
+        self.lbl_notification.setObjectName("NotificationLabel")
+        self.lbl_notification.setStyleSheet(styles.NOTIFICATION_LABEL_STYLE)
+        # Asegurar que el texto largo no rompa la UI ni expanda la ventana
+        self.lbl_notification.setWordWrap(False)
+        self.lbl_notification.setMinimumWidth(10) # Permitir que se reduzca
+        from PySide6.QtWidgets import QSizePolicy
+        self.lbl_notification.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        notification_layout.addWidget(self.lbl_notification, 1) # Darle stretch 1
+        
+        chat_vbox.addWidget(self.notification_area)
         
         # Scroll Area
         self.scroll_area = QScrollArea()
@@ -427,11 +540,48 @@ class MAGISystem(QMainWindow):
     
     @Slot(str, str)
     def agregar_mensaje(self, autor, mensaje):
-        """Agrega un mensaje al chat"""
-        is_ai = autor in ["IA", "SISTEMA", "MAGI", "MELCHOR", "GASPAR", "CASPER", "ANÓNIMO"]
+        """Agrega un mensaje al chat y a la memoria a corto plazo"""
+        is_ai = autor in ["IA", "SISTEMA", "MAGI", "MELCHOR", "GASPAR", "CASPER", "ANÓNIMO", "WIKIPEDIA"]
+        
+        # Guardar en historial (máximo 5 mensajes para contexto)
+        if autor == "ESTADÍSTICAS":
+            self.lbl_notification.setText(f"📊 {mensaje}")
+            self.lbl_notification.setToolTip(mensaje)
+            return
+            
+        if autor == "SISTEMA":
+            self.lbl_notification.setText(f"⚙️ {mensaje}")
+            self.lbl_notification.setToolTip(mensaje)
+            return
+
+        if autor == "WIKIPEDIA":
+            # Update notification bar with short message
+            self.lbl_notification.setText(f"🌐 Wikipedia: Knowledge injected")
+            # Continue to show full message in chat (removed return)
+
+
+        # Guardar en historial (máximo 5 mensajes para contexto)
+        self.chat_history.append(f"{autor}: {mensaje}")
+        if len(self.chat_history) > 5:
+            self.chat_history.pop(0)
+
         msg_widget = MessageWidget(autor, mensaje, is_ai)
         
         self.messages_layout.addWidget(msg_widget)
+        
+        # Animación de fade-in suave
+        msg_widget.setWindowOpacity(0.0)
+        animation = QPropertyAnimation(msg_widget, b"windowOpacity")
+        animation.setDuration(300)  # 300ms
+        animation.setStartValue(0.0)
+        animation.setEndValue(1.0)
+        animation.setEasingCurve(QEasingCurve.OutCubic)
+        animation.start()
+        
+        # Guardar referencia para que no se destruya
+        if not hasattr(self, 'animations'):
+            self.animations = []
+        self.animations.append(animation)
         
         # Guardar última respuesta para el hilo del debate
         if is_ai:
@@ -441,9 +591,22 @@ class MAGISystem(QMainWindow):
                 self.debate_turn = (self.debate_turn + 1) % 3
                 # Iniciar siguiente paso del debate con un pequeño retraso
                 QTimer.singleShot(3000, self.debate_step)
+            
+            # Dialogue Mode: If AI responded to Wikipedia, trigger next Wiki message
+            if self.wiki_dialogo and autor in ["MELCHOR", "GASPAR", "CASPER", "MAGI", "IA"]:
+                # Trigger Wikipedia after AI responds
+                QTimer.singleShot(4000, self.fetch_wiki_knowledge)
+        
+        # Dialogue Mode: If Wikipedia sent a message, trigger AI response
+        if self.wiki_dialogo and autor == "WIKIPEDIA":
+            # MAGI must answer
+            contexto = "\n".join(self.chat_history[-4:])
+            threading.Thread(target=self.brain_manager.process_message, 
+                            args=(contexto, self.signals), daemon=True).start()
         
         # Scroll to bottom reliably
-        QTimer.singleShot(50, lambda: self.scroll_area.verticalScrollBar().setValue(
+        # FIXED: Usar un temporizador un poco más largo para asegurar que el layout se ha estabilizado
+        QTimer.singleShot(100, lambda: self.scroll_area.verticalScrollBar().setValue(
             self.scroll_area.verticalScrollBar().maximum()
         ))
     
@@ -454,10 +617,10 @@ class MAGISystem(QMainWindow):
             if self.thinking_widget is None:
                 self.thinking_widget = ThinkingWidget()
                 self.messages_layout.addWidget(self.thinking_widget)
-                QApplication.processEvents()
-                self.scroll_area.verticalScrollBar().setValue(
+                # FIXED: Evitar processEvents que causa saltos de layout
+                QTimer.singleShot(50, lambda: self.scroll_area.verticalScrollBar().setValue(
                     self.scroll_area.verticalScrollBar().maximum()
-                )
+                ))
         else:
             if self.thinking_widget is not None:
                 self.thinking_widget.stop_animation()
@@ -465,14 +628,49 @@ class MAGISystem(QMainWindow):
                 self.thinking_widget.deleteLater()
                 self.thinking_widget = None
     
+    @Slot(str, int)
+    def on_brain_expanded(self, nombre, n):
+        """Callback cuando un cerebro crece"""
+        # Actualizar el chat
+        self.agregar_mensaje("ESTADÍSTICAS", f"🚀 {nombre.upper()} ha evolucionado a {n} neuronas.")
+        
+        # Actualizar sidebar
+        key = nombre.lower()
+        if key in self.brain_controls:
+            label = self.brain_controls[key]['label']
+            label.setText(f"Neurons: {n}")
+        
+        # Actualizar Dashboard metrics
+        if key == "melchor":
+            self.lbl_melchor_neurons.setText(f"🔴 Melchor: {n:,} neurons")
+        elif key == "gaspar":
+            self.lbl_gaspar_neurons.setText(f"🟢 Gaspar: {n:,} neurons")
+        elif key == "casper":
+            self.lbl_casper_neurons.setText(f"🔵 Casper: {n:,} neurons")
+        
+        # Actualizar peso total
+        self.actualizar_info_archivo()
+    
     @Slot(int, float)
     def actualizar_labels(self, neuronas, peso):
         """Actualiza las etiquetas de estadísticas"""
         for brain_name in ["melchor", "gaspar", "casper"]:
-            brain_ia = getattr(self.brain_manager, f"ia_{brain_name}")
-            label = self.brain_controls[brain_name]['label']
-            label.setText(f"{brain_name.upper()}: {brain_ia.n_oculta}")
-        self.lbl_peso.setText(f"💾 Mem: {peso:.2f} MB")
+            if brain_name in self.brain_controls:
+                brain_ia = getattr(self.brain_manager, f"ia_{brain_name}")
+                label = self.brain_controls[brain_name]['label']
+                label.setText(f"Neurons: {brain_ia.n_oculta}")
+        
+        # Actualizar métricas en Dashboard
+        self.lbl_peso.setText(f"💾 Memory: {peso:.2f} MB")
+        
+        # Actualizar neuronas individuales en Dashboard
+        melchor_n = self.brain_manager.ia_melchor.n_oculta
+        gaspar_n = self.brain_manager.ia_gaspar.n_oculta
+        casper_n = self.brain_manager.ia_casper.n_oculta
+        
+        self.lbl_melchor_neurons.setText(f"🔴 Melchor: {melchor_n:,} neurons")
+        self.lbl_gaspar_neurons.setText(f"🟢 Gaspar: {gaspar_n:,} neurons")
+        self.lbl_casper_neurons.setText(f"🔵 Casper: {casper_n:,} neurons")
     
     @Slot(str)
     def cargar_texto_transcrito(self, texto):
@@ -485,15 +683,80 @@ class MAGISystem(QMainWindow):
         peso = self.brain_manager.get_total_size_mb()
         self.actualizar_labels(0, peso)
     
+    @Slot(int)
+    def actualizar_progreso(self, valor):
+        """Actualiza la barra de progreso con colores dinámicos y texto"""
+        self.barra_progreso.setValue(valor)
+        
+        # Color dinámico según estado
+        if valor == 0:
+            # Idle - gris
+            self.barra_progreso.setStyleSheet("""
+                QProgressBar { 
+                    background-color: #1f2937; 
+                    border: none; 
+                    border-radius: 4px; 
+                    height: 6px; 
+                }
+                QProgressBar::chunk { 
+                    background-color: #374151;
+                    border-radius: 4px; 
+                }
+            """)
+            self.lbl_progreso.setText("Ready")
+            self.lbl_progreso.setStyleSheet("color: #94a3b8; font-size: 9px; font-weight: 500;")
+        elif valor == 100:
+            # Completo - verde
+            self.barra_progreso.setStyleSheet("""
+                QProgressBar { 
+                    background-color: #1f2937; 
+                    border: none; 
+                    border-radius: 4px; 
+                    height: 6px; 
+                }
+                QProgressBar::chunk { 
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #10b981, stop:1 #059669);
+                    border-radius: 4px; 
+                }
+            """)
+            self.lbl_progreso.setText("✓ Complete")
+            self.lbl_progreso.setStyleSheet("color: #10b981; font-size: 9px; font-weight: 600;")
+            # Reset después de 2 segundos
+            QTimer.singleShot(2000, lambda: self.actualizar_progreso(0))
+        else:
+            # Procesando - azul/índigo
+            self.barra_progreso.setStyleSheet("""
+                QProgressBar { 
+                    background-color: #1f2937; 
+                    border: none; 
+                    border-radius: 4px; 
+                    height: 6px; 
+                }
+                QProgressBar::chunk { 
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #6366f1, stop:1 #8b5cf6);
+                    border-radius: 4px; 
+                }
+            """)
+            self.lbl_progreso.setText(f"Processing... {valor}%")
+            self.lbl_progreso.setStyleSheet("color: #6366f1; font-size: 9px; font-weight: 600;")
+    
     def on_brain_toggled(self, brain_name, activo):
         """Callback cuando se activa/desactiva un cerebro"""
-        label = self.brain_controls[brain_name]['label']
+        controls = self.brain_controls[brain_name]
+        label = controls['label']
+        name_label = controls['name_label']
+        card = controls['card']
+        
         if activo:
-            label.setStyleSheet("color: #e2e8f0; font-size: 12px; font-weight: 500;")
-            self.agregar_mensaje("SISTEMA", f"🟢 {brain_name.upper()} ACTIVADO - Brain cell online")
+            name_label.setStyleSheet("color: #f8fafc; font-weight: bold;")
+            label.setStyleSheet("color: #94a3b8; font-size: 10px;")
+            card.setStyleSheet(styles.BRAIN_CARD_STYLE)
+            self.agregar_mensaje("SISTEMA", f"🟢 {brain_name.upper()} ACTIVADO")
         else:
-            label.setStyleSheet("color: #4b5563; font-size: 12px; text-decoration: line-through;")
-            self.agregar_mensaje("SISTEMA", f"⚪ {brain_name.upper()} DESACTIVADO - Dormant state")
+            name_label.setStyleSheet("color: #4b5563; font-weight: bold; text-decoration: line-through;")
+            label.setStyleSheet("color: #374151; font-size: 10px; text-decoration: line-through;")
+            card.setStyleSheet("background-color: #0d0f17; border: 1px solid #1f2937; border-radius: 12px; padding: 5px;")
+            self.agregar_mensaje("SISTEMA", f"⚪ {brain_name.upper()} DESACTIVADO")
     
     def toggle_votante_anonimo(self, state):
         """Activa o desactiva el votante anónimo"""
@@ -526,30 +789,173 @@ class MAGISystem(QMainWindow):
             self.agregar_mensaje("SISTEMA", "⚫ Modo Debate DESACTIVADO")
 
     def debate_step(self, prompt=None):
-        """Ejecuta un paso del debate con respuestas individuales"""
+        """Ejecuta un paso del debate con memoria de contexto"""
         if not self.debate_activo:
             return
             
-        texto = prompt if prompt else self.ultima_respuesta_magi
-        if not texto: return
-
+        # Construir contexto de los últimos 4 mensajes
+        contexto = "\n".join(self.chat_history[-4:]) if self.chat_history else ""
+        if prompt:
+            contexto += f"\nTu: {prompt}"
+        
         # Determinar a quién le toca
         nombres = ["MELCHOR", "GASPAR", "CASPER"]
         brain_name = nombres[self.debate_turn]
         
-        # Procesar de forma individual
+        # Procesar de forma individual con contexto
         threading.Thread(target=self.brain_manager.process_debate_message, 
-                        args=(texto, brain_name, self.signals), daemon=True).start()
+                        args=(contexto, brain_name, self.signals), daemon=True).start()
+
+    def toggle_wiki_mode(self, state):
+        """Activa o desactiva la inyección de Wikipedia"""
+        self.wiki_activo = (state == 2)
+        if self.wiki_activo:
+            self.lbl_wiki_status.setText("🔵 ACTIVO - Recibiendo datos")
+            self.lbl_wiki_status.setStyleSheet("color: #0ea5e9; font-size: 11px; font-weight: bold;")
+            self.agregar_mensaje("SISTEMA", "🌐 Inyección de Wiki ACTIVADA - MAGI recibirá datos aleatorios de Wikipedia ES")
+            # Iniciar primer fetch con pequeño retraso
+            QTimer.singleShot(1000, self.fetch_wiki_knowledge)
+        else:
+            self.wiki_timer.stop()
+            self.lbl_wiki_status.setText("⚫ INACTIVO")
+            self.lbl_wiki_status.setStyleSheet("color: #6b7280; font-size: 11px; font-style: italic;")
+            self.agregar_mensaje("SISTEMA", "⚫ Inyección de Wiki DESACTIVADA")
+
+    def fetch_wiki_knowledge(self):
+        """Obtiene un artículo aleatorio de Wikipedia en español y lo enseña a MAGI"""
+        if not self.wiki_activo: return
+        
+        # Mapeo de categorías para Wiki Identity
+        categories = {
+            "MELCHOR": ["Ciencia", "Tecnología", "Matemáticas", "Física", "Computación", "Astronomía", "Biología"],
+            "GASPAR": ["Literatura", "Arte", "Música", "Pintura", "Cine", "Poesía", "Arquitectura", "Escultura"],
+            "CASPER": ["Filosofía", "Ética", "Sociología", "Psicología", "Derecho", "Historia", "Religión", "Política"]
+        }
+
+        def job():
+            try:
+                tag_prefix = ""
+                selected_brain = None
+                
+                if self.wiki_identity:
+                    # Elegir un cerebro al azar y una categoría de su especialidad
+                    selected_brain = random.choice(["MELCHOR", "GASPAR", "CASPER"])
+                    category = random.choice(categories[selected_brain])
+                    tag_prefix = f"@{selected_brain} "
+                    
+                    # Buscar artículo aleatorio en esa categoría (usar Categoría: en ES)
+                    search_url = f"https://es.wikipedia.org/w/api.php?action=query&list=categorymembers&cmtitle=Categoría:{category}&cmlimit=20&format=json"
+                    headers = {'User-Agent': 'MAGI-System/1.0 (raul@example.com)'}
+                    r = requests.get(search_url, headers=headers, timeout=10).json()
+                    
+                    pages = r.get('query', {}).get('categorymembers', [])
+                    if pages:
+                        title = random.choice(pages).get('title')
+                        # Obtener sumario de ese título
+                        url = f"https://es.wikipedia.org/api/rest_v1/page/summary/{requests.utils.quote(title)}"
+                    else:
+                        # Fallback a random normal si falla la categoría
+                        url = "https://es.wikipedia.org/api/rest_v1/page/random/summary"
+                else:
+                    # API de Wikipedia para artículo aleatorio (sumario) normal
+                    url = "https://es.wikipedia.org/api/rest_v1/page/random/summary"
+                
+                headers = {'User-Agent': 'MAGI-System/1.0 (raul@example.com)'}
+                response = requests.get(url, headers=headers, timeout=10)
+                if response.status_code == 200:
+                    data = response.json()
+                    titulo = data.get('title', 'Sin Título')
+                    extracto = data.get('extract', '')
+                    
+                    if extracto and len(extracto) > 50:
+                        full_msg = f"{tag_prefix}{titulo.upper()}: {extracto}"
+                        # Enviar al chat (esto se ejecuta en el hilo, usar Slot o QMetaObject)
+                        QMetaObject.invokeMethod(self, "agregar_mensaje", 
+                                               Qt.QueuedConnection,
+                                               Q_ARG(str, "WIKIPEDIA"),
+                                               Q_ARG(str, full_msg))
+                        
+                        # Entrenar cerebros (BrainManager ahora maneja el filtrado por tags si existen)
+                        # Pero aquí lo forzamos si es modo inyección simple
+                        contexto = f"Wikipedia: {titulo}. {extracto}"
+                        if selected_brain:
+                            contexto = f"@{selected_brain} " + contexto
+                        
+                        self.brain_manager.process_message(contexto, self.signals)
+                
+            except Exception as e:
+                print(f"Error Wiki: {e}")
+            
+            # Programar siguiente fetch si sigue activo (solo si no es modo diálogo)
+            if self.wiki_activo and not self.wiki_dialogo:
+                intervalo = 10000 if self.wiki_identity else 1000 # Más lento en modo identidad
+                QMetaObject.invokeMethod(self.wiki_timer, "start", 
+                                       Qt.QueuedConnection,
+                                       Q_ARG(int, intervalo))
+
+        threading.Thread(target=job, daemon=True).start()
+
+    def toggle_wiki_dialogue(self, state):
+        """Activa o desactiva el diálogo con Wikipedia"""
+        self.wiki_dialogo = (state == 2)
+        if self.wiki_dialogo:
+            self.lbl_wiki_dialogue_status.setText("💬 ACTIVO - Conversando")
+            self.lbl_wiki_dialogue_status.setStyleSheet("color: #0ea5e9; font-size: 11px; font-weight: bold;")
+            self.agregar_mensaje("SISTEMA", "💬 Diálogo Wiki ACTIVADO - MAGI conversará con Wikipedia")
+            
+            # Desactivar modo identidad para evitar conflictos
+            if self.wiki_identity:
+                self.switch_wiki_identity.setChecked(False)
+
+            # Si el modo inyección no está activo, iniciamos el primer mensaje
+            if not self.wiki_activo:
+                self.wiki_activo = True # Necesario para fetch_wiki_knowledge
+                QTimer.singleShot(1000, self.fetch_wiki_knowledge)
+        else:
+            self.lbl_wiki_dialogue_status.setText("⚫ INACTIVO")
+            self.lbl_wiki_dialogue_status.setStyleSheet("color: #6b7280; font-size: 9px; font-style: italic;")
+            self.agregar_mensaje("SISTEMA", "⚫ Diálogo Wiki DESACTIVADO")
+            # Restaurar estado de wiki_activo basado en el otro switch
+            self.wiki_activo = self.switch_wiki.isChecked()
+
+    def toggle_wiki_identity(self, state):
+        """Activa o desactiva la inyección por identidad especializada"""
+        self.wiki_identity = (state == 2)
+        if self.wiki_identity:
+            self.lbl_wiki_identity_status.setText("🧬 ACTIVO - Especializado")
+            self.lbl_wiki_identity_status.setStyleSheet("color: #a855f7; font-size: 11px; font-weight: bold;")
+            self.agregar_mensaje("SISTEMA", "🧬 Wiki Identidad ACTIVADO - Melchor, Gaspar y Casper recibirán datos de sus áreas")
+            
+            # Desactivar modo diálogo para evitar conflictos
+            if self.wiki_dialogo:
+                self.switch_wiki_dialogue.setChecked(False)
+
+            if not self.wiki_activo:
+                self.wiki_activo = True
+                QTimer.singleShot(1000, self.fetch_wiki_knowledge)
+        else:
+            self.lbl_wiki_identity_status.setText("⚫ INACTIVO")
+            self.lbl_wiki_identity_status.setStyleSheet("color: #6b7280; font-size: 9px; font-style: italic;")
+            self.agregar_mensaje("SISTEMA", "⚫ Wiki Identidad DESACTIVADO")
+            self.wiki_activo = self.switch_wiki.isChecked()
 
     def enviar_mensaje(self):
         """Envía un mensaje"""
         texto = self.user_input.text().strip()
-        if not texto:
-            return
+        if not texto: return
+        
         self.user_input.clear()
         self.agregar_mensaje("Tu", texto)
-        threading.Thread(target=self.brain_manager.process_message, 
-                        args=(texto, self.signals), daemon=True).start()
+        
+        # Construir contexto para la IA
+        contexto = "\n".join(self.chat_history[-4:-1]) if len(self.chat_history) > 1 else ""
+        contexto += f"\nTu: {texto}"
+
+        if self.debate_activo:
+            self.debate_step(texto)
+        else:
+            threading.Thread(target=self.brain_manager.process_message, 
+                            args=(contexto, self.signals), daemon=True).start()
     
     def alternar_escucha(self):
         """Alterna el estado de escucha del micrófono"""
@@ -577,20 +983,38 @@ class MAGISystem(QMainWindow):
                         args=(texto, self.signals), daemon=True).start()
     
     def dormir_cerebros(self):
-        """Activa el modo de sueño para consolidación de memoria"""
-        dialog = SleepDialog(self)
-        dialog.sleep_started.connect(self.ejecutar_modo_sueno)
-        dialog.exec()
-    
-    def ejecutar_modo_sueno(self, duracion_segundos):
-        """Ejecuta el modo de sueño con la duración especificada"""
-        self.agregar_mensaje("SISTEMA", f"💤 Activando modo de sueño profundo por {duracion_segundos // 60} minutos...")
+        """Activa el modo de sueño para consolidación de memoria instantánea"""
+        self.agregar_mensaje("SISTEMA", "💤 Iniciando consolidación neuronal instantánea...")
+        # Ejecutar en segundo plano para no congelar la UI si los cerebros son grandes
         threading.Thread(target=self.brain_manager.sleep_all_brains, 
                         args=(self.signals,), daemon=True).start()
     
     def toggle_sidebar(self):
         """Muestra u oculta la barra lateral"""
         self.sidebar.setVisible(not self.sidebar.isVisible())
+
+    def inyectar_charter_identidad(self):
+        """Inyecta la definición de las identidades de Melchor, Gaspar y Casper"""
+        mensaje = (
+            "📜 PROTOCOLO DE IDENTIDAD MAGI:\n\n"
+            "🔴 MELCHOR (Lógica/Ciencia): Entrenado con textos técnicos, leyes y ciencia. Cerebro racional.\n"
+            "🟢 GASPAR (Creatividad/Arte): Entrenado con literatura, poesía y guiones. Cerebro emocional.\n"
+            "🔵 CASPER (Filosofía/Ética): Entrenado con tratados de ética y diálogos humanos. Cerebro mediador."
+        )
+        
+        # Mostrar en chat como si viniera de Wikipedia (la fuente del conocimiento)
+        self.agregar_mensaje("WIKIPEDIA", mensaje)
+        
+        # Hacer que todos los cerebros aprendan su propia definición
+        def job():
+            self.brain_manager.train_massive(mensaje, self.signals)
+            # Notificar éxito
+            QMetaObject.invokeMethod(self, "agregar_mensaje", 
+                                   Qt.QueuedConnection,
+                                   Q_ARG(str, "SISTEMA"),
+                                   Q_ARG(str, "✅ Identidades consolidadas en el núcleo neuronal."))
+            
+        threading.Thread(target=job, daemon=True).start()
     
     def abrir_txt(self):
         """Abre un archivo de texto"""
