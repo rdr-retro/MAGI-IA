@@ -5,6 +5,9 @@ Versión optimizada y modular
 import sys
 import os
 import threading
+import time
+import re
+import html
 
 # Fix for module loading
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -28,6 +31,8 @@ from chat_interactivo import RedCrecimientoInfinito
 
 # Importar el gestor de cerebros (lo crearemos después)
 from core.brain_manager import BrainManager
+# Headless trainer support
+from core.headless_trainer import HeadlessTrainer
 
 
 class MAGISystem(QMainWindow):
@@ -50,15 +55,31 @@ class MAGISystem(QMainWindow):
         self.escuchando = False
         self.buffer_voz = ""
         self.debate_activo = False
+        self.modo_separado = False # Si activo, cada cerebro responde por separado por defecto
         self.ultima_respuesta_magi = ""
         self.debate_turn = 0 # 0=Melchor, 1=Gaspar, 2=Casper
         self.chat_history = [] # Memoria a corto plazo (últimos mensajes)
         self.wiki_activo = False
+        self.wiki_activo_base = False
         self.wiki_dialogo = False
         self.wiki_identity = False
+        self.max_mensajes_visibles = 50 # Límite para mantener el rendimiento
         self.wiki_timer = QTimer()
+        self.wiki_timer.setSingleShot(True) # Crucial: Solo dispara una vez y lo reiniciamos manualmente
         self.wiki_timer.timeout.connect(self.fetch_wiki_knowledge)
         
+        # World News Mode (BBC Mundo)
+        self.news_activo = False
+        self.news_timer = QTimer()
+        self.news_timer.setSingleShot(True)
+        self.news_timer.timeout.connect(self.fetch_news_knowledge)
+
+        # Story Mode (Cuentos)
+        self.story_activo = False
+        self.story_cache = [] # Cache para microrrelatos de internet
+        self.story_timer = QTimer()
+        self.story_timer.setSingleShot(True)
+        self.story_timer.timeout.connect(self.fetch_story_knowledge)
         # Crear interfaz
         self.init_ui()
         
@@ -231,6 +252,12 @@ class MAGISystem(QMainWindow):
         self.lbl_casper_neurons.setObjectName("StatLabel")
         stats_layout.addWidget(self.lbl_casper_neurons)
         
+        self.add_separator(stats_layout)
+        
+        self.lbl_vocab_size = QLabel("🔤 Shared Vocab: 0 chars")
+        self.lbl_vocab_size.setObjectName("StatLabel")
+        stats_layout.addWidget(self.lbl_vocab_size)
+        
         self.lbl_uptime = QLabel("⏱️ Uptime: Stable")
         self.lbl_uptime.setObjectName("StatLabel")
         stats_layout.addWidget(self.lbl_uptime)
@@ -262,6 +289,15 @@ class MAGISystem(QMainWindow):
         btn_sleep.setStyleSheet(styles.SLEEP_BUTTON_STYLE)
         btn_sleep.clicked.connect(self.dormir_cerebros)
         layout.addWidget(btn_sleep)
+
+        btn_siesta = QPushButton("🛌 SIESTA")
+        btn_siesta.setObjectName("SiestaBtn")
+        # Reuse sleep style but perhaps with a slight color tweak if I had more styles, 
+        # for now I'll use a custom one derived from SLEEP_BUTTON_STYLE or just use it as is.
+        btn_siesta.setStyleSheet(styles.SLEEP_BUTTON_STYLE.replace("#6366f1", "#8b5cf6")) # Slightly more purple
+        btn_siesta.setToolTip("Refuerza patrones fuertes sin eliminar neuronas (Modo Ligero)")
+        btn_siesta.clicked.connect(self.siesta_cerebros)
+        layout.addWidget(btn_siesta)
         
         # Ribbon de carga de archivos (Cuadrícula)
         ribbon_label = QLabel("IMPORT SOURCES")
@@ -279,6 +315,8 @@ class MAGISystem(QMainWindow):
             ("📕", "Extract text from PDF\nMax 500 pages recommended", self.abrir_pdf, 0, 2),
             ("🎬", "Transcribe audio with Whisper\nFormats: mp4, mkv, wav, mp3", self.abrir_mp4, 1, 0),
             ("📂", "Batch transcribe videos\nMay take several minutes", self.abrir_carpeta_videos, 1, 1),
+            ("🚀", "M4 GPU Massive Training\nRequires PyTorch + MPS", self.abrir_carpeta_txt_gpu, 1, 2),
+            ("💻", "Launch External Terminal\nRobust Headless Mode", self.abrir_terminal_gpu, 2, 0),
         ]
         
         for icon, tooltip, handler, r, c in buttons:
@@ -367,6 +405,36 @@ class MAGISystem(QMainWindow):
         self.lbl_wiki_identity_status.setObjectName("StatLabel")
         self.lbl_wiki_identity_status.setStyleSheet("color: #6b7280; font-size: 9px; font-style: italic; margin-bottom: 5px;")
         layout.addWidget(self.lbl_wiki_identity_status)
+
+        # SECCIÓN WORLD NEWS (BBC Mundo)
+        lbl_news_title = QLabel("GLOBAL AWARENESS")
+        lbl_news_title.setStyleSheet("color: #2dd4bf; font-weight: bold; margin-top: 10px;")
+        layout.addWidget(lbl_news_title)
+
+        self.switch_news = QCheckBox("Modo Noticias")
+        self.switch_news.setStyleSheet(styles.WIKI_SWITCH_STYLE)
+        self.switch_news.stateChanged.connect(self.toggle_news_mode)
+        layout.addWidget(self.switch_news)
+
+        self.lbl_news_status = QLabel("⚫ INACTIVO")
+        self.lbl_news_status.setObjectName("StatLabel")
+        self.lbl_news_status.setStyleSheet("color: #6b7280; font-size: 9px; font-style: italic; margin-bottom: 5px;")
+        layout.addWidget(self.lbl_news_status)
+
+        # SECCIÓN CUENTOS
+        lbl_story_title = QLabel("STORYTELLING TRAINING")
+        lbl_story_title.setStyleSheet("color: #f472b6; font-weight: bold; margin-top: 10px;")
+        layout.addWidget(lbl_story_title)
+
+        self.switch_story = QCheckBox("Modo Cuentos")
+        self.switch_story.setStyleSheet(styles.WIKI_SWITCH_STYLE)
+        self.switch_story.stateChanged.connect(self.toggle_story_mode)
+        layout.addWidget(self.switch_story)
+
+        self.lbl_story_status = QLabel("⚫ INACTIVO")
+        self.lbl_story_status.setObjectName("StatLabel")
+        self.lbl_story_status.setStyleSheet("color: #6b7280; font-size: 9px; font-style: italic; margin-bottom: 5px;")
+        layout.addWidget(self.lbl_story_status)
         
         layout.addStretch()
 
@@ -519,12 +587,22 @@ class MAGISystem(QMainWindow):
         self.user_input.returnPressed.connect(self.enviar_mensaje)
         inner_input_layout.addWidget(self.user_input)
         
-        # Botón enviar
+        # Botón enviar (MAGI Consensus)
         btn_enviar = QPushButton("➡️")
         btn_enviar.setFixedSize(32, 32)
+        btn_enviar.setToolTip("Submit to MAGI (Consensus)")
         btn_enviar.setStyleSheet(styles.SEND_BUTTON_STYLE)
         btn_enviar.clicked.connect(self.enviar_mensaje)
         inner_input_layout.addWidget(btn_enviar)
+        
+        # Botón SWITCH POR SEPARADO
+        self.btn_toggle_separado = QPushButton("🧬")
+        self.btn_toggle_separado.setCheckable(True)
+        self.btn_toggle_separado.setFixedSize(32, 32)
+        self.btn_toggle_separado.setToolTip("Toggle Separate Response Mode")
+        self.btn_toggle_separado.setStyleSheet(styles.MIC_BUTTON_STYLE)
+        self.btn_toggle_separado.toggled.connect(self.alternar_modo_separado)
+        inner_input_layout.addWidget(self.btn_toggle_separado)
         
         # Botón micrófono
         self.btn_mic = QPushButton("🎤")
@@ -538,10 +616,42 @@ class MAGISystem(QMainWindow):
     
     # ========== MÉTODOS DE INTERACCIÓN ==========
     
+    def alternar_modo_separado(self, activo):
+        """Activa o desactiva el modo de respuesta individual persistente"""
+        self.modo_separado = activo
+        if activo:
+            self.btn_toggle_separado.setStyleSheet(styles.MIC_BUTTON_ACTIVE_STYLE.replace("#ef4444", "#a855f7")) # Púrpura para ADN
+            self.lbl_notification.setText("🧬 MODO SEPARADO ACTIVADO: Cada cerebro responderá individualmente")
+        else:
+            self.btn_toggle_separado.setStyleSheet(styles.MIC_BUTTON_STYLE)
+            self.lbl_notification.setText("🤝 MODO CONSENSO ACTIVADO: Respuesta vía MAGI")
+
+    def enviar_mensaje(self):
+        """Procesa el envío de mensaje según el modo activo"""
+        texto = self.user_input.text().strip()
+        if not texto: return
+        
+        self.agregar_mensaje("TÚ", texto)
+        self.user_input.clear()
+        
+        # Modo Debate Secuencial (Auto-Debate)
+        if hasattr(self, 'debate_activo') and self.debate_activo:
+            self.debate_step(texto)
+            return
+
+        # Modo Respuesta Separada (🧬)
+        if self.modo_separado:
+            threading.Thread(target=self.brain_manager.process_message_separate, 
+                            args=(texto, self.signals), daemon=True).start()
+        else:
+            # MAGI Normal (Consenso)
+            threading.Thread(target=self.brain_manager.process_message, 
+                            args=(texto, self.signals), daemon=True).start()
+
     @Slot(str, str)
     def agregar_mensaje(self, autor, mensaje):
         """Agrega un mensaje al chat y a la memoria a corto plazo"""
-        is_ai = autor in ["IA", "SISTEMA", "MAGI", "MELCHOR", "GASPAR", "CASPER", "ANÓNIMO", "WIKIPEDIA"]
+        is_ai = autor in ["IA", "SISTEMA", "MAGI", "MELCHOR", "GASPAR", "CASPER", "ANÓNIMO", "WIKIPEDIA", "BBC MUNDO"]
         
         # Guardar en historial (máximo 5 mensajes para contexto)
         if autor == "ESTADÍSTICAS":
@@ -609,6 +719,20 @@ class MAGISystem(QMainWindow):
         QTimer.singleShot(100, lambda: self.scroll_area.verticalScrollBar().setValue(
             self.scroll_area.verticalScrollBar().maximum()
         ))
+        
+        # Limpiar mensajes antiguos para mantener el rendimiento
+        self.limpiar_mensajes_antiguos()
+    
+    def limpiar_mensajes_antiguos(self):
+        """Elimina los widgets de mensajes más antiguos si superan el límite"""
+        if self.messages_layout.count() > self.max_mensajes_visibles + 1: # +1 por el stretch
+            # El stretch es el primer elemento (index 0)
+            # Los mensajes empiezan desde el index 1
+            # Borramos el mensaje más antiguo (el que está en index 1)
+            item = self.messages_layout.takeAt(1)
+            widget = item.widget()
+            if widget:
+                widget.deleteLater()
     
     @Slot(bool)
     def toggle_thinking_animation(self, mostrar):
@@ -648,6 +772,10 @@ class MAGISystem(QMainWindow):
         elif key == "casper":
             self.lbl_casper_neurons.setText(f"🔵 Casper: {n:,} neurons")
         
+        # Actualizar vocabulario (usamos Melchor como referencia principal)
+        vocab_n = len(self.brain_manager.ia_melchor.vocab)
+        self.lbl_vocab_size.setText(f"🔤 Shared Vocab: {vocab_n:,} chars")
+        
         # Actualizar peso total
         self.actualizar_info_archivo()
     
@@ -671,6 +799,9 @@ class MAGISystem(QMainWindow):
         self.lbl_melchor_neurons.setText(f"🔴 Melchor: {melchor_n:,} neurons")
         self.lbl_gaspar_neurons.setText(f"🟢 Gaspar: {gaspar_n:,} neurons")
         self.lbl_casper_neurons.setText(f"🔵 Casper: {casper_n:,} neurons")
+        
+        vocab_n = len(self.brain_manager.ia_melchor.vocab)
+        self.lbl_vocab_size.setText(f"🔤 Shared Vocab: {vocab_n:,} chars")
     
     @Slot(str)
     def cargar_texto_transcrito(self, texto):
@@ -807,93 +938,137 @@ class MAGISystem(QMainWindow):
                         args=(contexto, brain_name, self.signals), daemon=True).start()
 
     def toggle_wiki_mode(self, state):
-        """Activa o desactiva la inyección de Wikipedia"""
-        self.wiki_activo = (state == 2)
-        if self.wiki_activo:
-            self.lbl_wiki_status.setText("🔵 ACTIVO - Recibiendo datos")
-            self.lbl_wiki_status.setStyleSheet("color: #0ea5e9; font-size: 11px; font-weight: bold;")
-            self.agregar_mensaje("SISTEMA", "🌐 Inyección de Wiki ACTIVADA - MAGI recibirá datos aleatorios de Wikipedia ES")
-            # Iniciar primer fetch con pequeño retraso
-            QTimer.singleShot(1000, self.fetch_wiki_knowledge)
-        else:
-            self.wiki_timer.stop()
-            self.lbl_wiki_status.setText("⚫ INACTIVO")
-            self.lbl_wiki_status.setStyleSheet("color: #6b7280; font-size: 11px; font-style: italic;")
-            self.agregar_mensaje("SISTEMA", "⚫ Inyección de Wiki DESACTIVADA")
+        """Activa/Desactiva la inyección base de Wikipedia"""
+        self.wiki_activo_base = (state == 2)
+        self.actualizar_estado_wiki()
 
-    def fetch_wiki_knowledge(self):
-        """Obtiene un artículo aleatorio de Wikipedia en español y lo enseña a MAGI"""
-        if not self.wiki_activo: return
+    def clean_wiki_content(self, text):
+        """Limpia el contenido de Wikipedia de basura visual y LaTeX"""
+        if not text: return ""
         
+        # 1. Eliminar bloques de fórmulas LaTeX {\displaystyle ...}
+        text = re.sub(r'\{\\displaystyle.*?\}', '', text, flags=re.DOTALL)
+        
+        # 2. Eliminar referencias tipo [1], [23], [cita requerida]
+        text = re.sub(r'\[\d+\]|\[cita\s+requerida\]', '', text)
+        
+        # 3. Eliminar caracteres matemáticos aislados y símbolos raros que rompen el flujo
+        # Eliminamos secuencias de símbolos matemáticos que suelen venir en bloques de fórmulas mal convertidos
+        text = re.sub(r'[\∂\μ\ψ\σ\¯\±\≠\≤\≥\→\∞\∫\∑\∏\√\∝\∞\∠\∧\∨\∩\∪\⊂\⊃\⊆\⊇]+', ' ', text)
+        
+        # 4. Eliminar bloques de código o basura técnica que empieza por {\
+        text = re.sub(r'\{\\.*?\}', '', text, flags=re.DOTALL)
+        
+        # 5. Normalizar espacios y saltos de línea
+        text = re.sub(r'\n\s*\n', '\n', text)
+        text = re.sub(r' +', ' ', text)
+        
+        return text.strip()
+
+    def _wiki_worker(self, brain_name=None):
+        """Worker individual para obtener y procesar un artículo de Wikipedia"""
         # Mapeo de categorías para Wiki Identity
         categories = {
             "MELCHOR": ["Ciencia", "Tecnología", "Matemáticas", "Física", "Computación", "Astronomía", "Biología"],
             "GASPAR": ["Literatura", "Arte", "Música", "Pintura", "Cine", "Poesía", "Arquitectura", "Escultura"],
             "CASPER": ["Filosofía", "Ética", "Sociología", "Psicología", "Derecho", "Historia", "Religión", "Política"]
         }
-
-        def job():
-            try:
-                tag_prefix = ""
-                selected_brain = None
-                
-                if self.wiki_identity:
-                    # Elegir un cerebro al azar y una categoría de su especialidad
-                    selected_brain = random.choice(["MELCHOR", "GASPAR", "CASPER"])
-                    category = random.choice(categories[selected_brain])
-                    tag_prefix = f"@{selected_brain} "
-                    
-                    # Buscar artículo aleatorio en esa categoría (usar Categoría: en ES)
-                    search_url = f"https://es.wikipedia.org/w/api.php?action=query&list=categorymembers&cmtitle=Categoría:{category}&cmlimit=20&format=json"
-                    headers = {'User-Agent': 'MAGI-System/1.0 (raul@example.com)'}
-                    r = requests.get(search_url, headers=headers, timeout=10).json()
-                    
-                    pages = r.get('query', {}).get('categorymembers', [])
-                    if pages:
-                        title = random.choice(pages).get('title')
-                        # Obtener sumario de ese título
-                        url = f"https://es.wikipedia.org/api/rest_v1/page/summary/{requests.utils.quote(title)}"
-                    else:
-                        # Fallback a random normal si falla la categoría
-                        url = "https://es.wikipedia.org/api/rest_v1/page/random/summary"
-                else:
-                    # API de Wikipedia para artículo aleatorio (sumario) normal
-                    url = "https://es.wikipedia.org/api/rest_v1/page/random/summary"
-                
-                headers = {'User-Agent': 'MAGI-System/1.0 (raul@example.com)'}
-                response = requests.get(url, headers=headers, timeout=10)
-                if response.status_code == 200:
-                    data = response.json()
-                    titulo = data.get('title', 'Sin Título')
-                    extracto = data.get('extract', '')
-                    
-                    if extracto and len(extracto) > 50:
-                        full_msg = f"{tag_prefix}{titulo.upper()}: {extracto}"
-                        # Enviar al chat (esto se ejecuta en el hilo, usar Slot o QMetaObject)
-                        QMetaObject.invokeMethod(self, "agregar_mensaje", 
-                                               Qt.QueuedConnection,
-                                               Q_ARG(str, "WIKIPEDIA"),
-                                               Q_ARG(str, full_msg))
-                        
-                        # Entrenar cerebros (BrainManager ahora maneja el filtrado por tags si existen)
-                        # Pero aquí lo forzamos si es modo inyección simple
-                        contexto = f"Wikipedia: {titulo}. {extracto}"
-                        if selected_brain:
-                            contexto = f"@{selected_brain} " + contexto
-                        
-                        self.brain_manager.process_message(contexto, self.signals)
-                
-            except Exception as e:
-                print(f"Error Wiki: {e}")
+        
+        try:
+            titulo_final = ""
+            headers = {'User-Agent': 'MAGI-System/1.0 (raul@example.com)'}
             
-            # Programar siguiente fetch si sigue activo (solo si no es modo diálogo)
-            if self.wiki_activo and not self.wiki_dialogo:
-                intervalo = 10000 if self.wiki_identity else 1000 # Más lento en modo identidad
-                QMetaObject.invokeMethod(self.wiki_timer, "start", 
-                                       Qt.QueuedConnection,
-                                       Q_ARG(int, intervalo))
+            # 1. Obtener un título basado en el cerebro o aleatorio
+            if brain_name and brain_name in categories:
+                category = random.choice(categories[brain_name])
+                search_url = f"https://es.wikipedia.org/w/api.php?action=query&list=categorymembers&cmtitle=Categoría:{category}&cmlimit=20&format=json"
+                r = requests.get(search_url, headers=headers, timeout=10).json()
+                pages = r.get('query', {}).get('categorymembers', [])
+                if pages: titulo_final = random.choice(pages).get('title')
+            
+            if not titulo_final:
+                # Random title fallback
+                random_url = "https://es.wikipedia.org/w/api.php?action=query&list=random&rnnamespace=0&rnlimit=1&format=json"
+                r = requests.get(random_url, headers=headers, timeout=10).json()
+                pages = r.get('query', {}).get('random', [])
+                if pages: titulo_final = pages[0].get('title')
 
-        threading.Thread(target=job, daemon=True).start()
+            if not titulo_final: return
+
+            # 2. Obtener el CONTENIDO COMPLETO
+            content_url = f"https://es.wikipedia.org/w/api.php?action=query&prop=extracts&explaintext=1&titles={requests.utils.quote(titulo_final)}&format=json"
+            r_content = requests.get(content_url, headers=headers, timeout=15).json()
+            pages_data = r_content.get('query', {}).get('pages', {})
+            page_id = list(pages_data.keys())[0]
+            raw_text = pages_data[page_id].get('extract', '')
+
+            full_text = self.clean_wiki_content(raw_text)
+
+            if full_text and len(full_text) > 50:
+                chunk_size = 1500
+                chunks = [full_text[i:i+chunk_size] for i in range(0, len(full_text), chunk_size)]
+                
+                # Limitar a máximo 3 bloques para no saturar si es multi-cerebro
+                if brain_name: chunks = chunks[:3]
+                
+                info_msg = f"📚 LEYENDO ARTÍCULO COMPLETO: {titulo_final.upper()}"
+                if brain_name: info_msg = f"🧬 ESPECIALIZACIÓN {brain_name}: {titulo_final.upper()}"
+                
+                QMetaObject.invokeMethod(self, "agregar_mensaje", 
+                                       Qt.QueuedConnection,
+                                       Q_ARG(str, "WIKIPEDIA"),
+                                       Q_ARG(str, f"{info_msg} ({len(chunks)} bloques)"))
+
+                for idx, chunk in enumerate(chunks):
+                    if not self.wiki_activo: break
+                    
+                    tag = f"@{brain_name} " if brain_name else ""
+                    full_msg = f"{tag}[BLOQUE {idx+1}/{len(chunks)}] {chunk}"
+                    
+                    QMetaObject.invokeMethod(self, "agregar_mensaje", 
+                                           Qt.QueuedConnection,
+                                           Q_ARG(str, "WIKIPEDIA"),
+                                           Q_ARG(str, full_msg))
+                    
+                    contexto = f"Wikipedia: {titulo_final}. {chunk}"
+                    if brain_name: contexto = f"@{brain_name} " + contexto
+                    
+                    self.brain_manager.process_message(contexto, self.signals)
+                    time.sleep(4.0) # Pausa un poco más larga para que la IA responda bien
+                
+        except Exception as e:
+            print(f"Error Wiki Worker ({brain_name}): {e}")
+
+    def fetch_wiki_knowledge(self):
+        """Punto de entrada para el sistema de Wikipedia"""
+        if not self.wiki_activo: return
+        
+        def master_job():
+            try:
+                if self.wiki_identity:
+                    # LANZAR 3 CEREBROS A LA VEZ
+                    threads = []
+                    for name in ["MELCHOR", "GASPAR", "CASPER"]:
+                        t = threading.Thread(target=self._wiki_worker, args=(name,), daemon=True)
+                        threads.append(t)
+                        t.start()
+                        time.sleep(2.0) # Escalonar un poco el inicio
+                    
+                    # Esperar a que terminen o ignorar (son daemon)
+                else:
+                    # Modo normal (uno solo por consenso)
+                    self._wiki_worker(None)
+                
+            finally:
+                # REPROGRAMACIÓN
+                if self.wiki_activo:
+                    # Intervalos más largos si son 3 a la vez
+                    intervalo = 12000 if self.wiki_identity else (8000 if self.wiki_dialogo else 5000)
+                    QMetaObject.invokeMethod(self.wiki_timer, "start", 
+                                           Qt.QueuedConnection,
+                                           Q_ARG(int, intervalo))
+
+        threading.Thread(target=master_job, daemon=True).start()
 
     def toggle_wiki_dialogue(self, state):
         """Activa o desactiva el diálogo con Wikipedia"""
@@ -906,17 +1081,12 @@ class MAGISystem(QMainWindow):
             # Desactivar modo identidad para evitar conflictos
             if self.wiki_identity:
                 self.switch_wiki_identity.setChecked(False)
-
-            # Si el modo inyección no está activo, iniciamos el primer mensaje
-            if not self.wiki_activo:
-                self.wiki_activo = True # Necesario para fetch_wiki_knowledge
-                QTimer.singleShot(1000, self.fetch_wiki_knowledge)
         else:
             self.lbl_wiki_dialogue_status.setText("⚫ INACTIVO")
             self.lbl_wiki_dialogue_status.setStyleSheet("color: #6b7280; font-size: 9px; font-style: italic;")
             self.agregar_mensaje("SISTEMA", "⚫ Diálogo Wiki DESACTIVADO")
-            # Restaurar estado de wiki_activo basado en el otro switch
-            self.wiki_activo = self.switch_wiki.isChecked()
+        
+        self.actualizar_estado_wiki()
 
     def toggle_wiki_identity(self, state):
         """Activa o desactiva la inyección por identidad especializada"""
@@ -929,33 +1099,212 @@ class MAGISystem(QMainWindow):
             # Desactivar modo diálogo para evitar conflictos
             if self.wiki_dialogo:
                 self.switch_wiki_dialogue.setChecked(False)
-
-            if not self.wiki_activo:
-                self.wiki_activo = True
-                QTimer.singleShot(1000, self.fetch_wiki_knowledge)
         else:
             self.lbl_wiki_identity_status.setText("⚫ INACTIVO")
             self.lbl_wiki_identity_status.setStyleSheet("color: #6b7280; font-size: 9px; font-style: italic;")
             self.agregar_mensaje("SISTEMA", "⚫ Wiki Identidad DESACTIVADO")
-            self.wiki_activo = self.switch_wiki.isChecked()
-
-    def enviar_mensaje(self):
-        """Envía un mensaje"""
-        texto = self.user_input.text().strip()
-        if not texto: return
         
-        self.user_input.clear()
-        self.agregar_mensaje("Tu", texto)
-        
-        # Construir contexto para la IA
-        contexto = "\n".join(self.chat_history[-4:-1]) if len(self.chat_history) > 1 else ""
-        contexto += f"\nTu: {texto}"
+        self.actualizar_estado_wiki()
 
-        if self.debate_activo:
-            self.debate_step(texto)
+    def actualizar_estado_wiki(self):
+        """Sincroniza el estado global de Wiki y el timer"""
+        was_active = self.wiki_activo
+        self.wiki_activo = self.wiki_activo_base or self.wiki_dialogo or self.wiki_identity
+        
+        if self.wiki_activo:
+            if not was_active:
+                self.agregar_mensaje("SISTEMA", "🧬 Sistema de Conocimiento Wikipedia ACTIVADO")
+                self.wiki_timer.start(1000)
+            
+            # Actualizar labels principales si es necesario
+            if self.wiki_activo_base:
+                self.lbl_wiki_status.setText("🧬 ACTIVO")
+                self.lbl_wiki_status.setStyleSheet("color: #a855f7; font-size: 11px; font-weight: bold;")
         else:
-            threading.Thread(target=self.brain_manager.process_message, 
-                            args=(contexto, self.signals), daemon=True).start()
+            self.wiki_timer.stop()
+            self.lbl_wiki_status.setText("⚫ INACTIVO")
+            self.lbl_wiki_status.setStyleSheet("color: #6b7280; font-size: 11px; font-style: italic;")
+            if was_active:
+                self.agregar_mensaje("SISTEMA", "⚫ Sistema de Conocimiento Wikipedia DESACTIVADO")
+
+    def toggle_news_mode(self, state):
+        """Activa/Desactiva el modo de noticias del mundo"""
+        self.news_activo = (state == 2)
+        if self.news_activo:
+            self.lbl_news_status.setText("🌐 ACTIVO - BBC Mundo")
+            self.lbl_news_status.setStyleSheet("color: #2dd4bf; font-size: 11px; font-weight: bold;")
+            self.agregar_mensaje("SISTEMA", "🌐 World News Mode ACTIVADO (BBC Mundo - 0.5s)")
+            self.news_timer.start(100)
+        else:
+            self.news_timer.stop()
+            self.lbl_news_status.setText("⚫ INACTIVO")
+            self.lbl_news_status.setStyleSheet("color: #6b7280; font-size: 9px; font-style: italic;")
+            self.agregar_mensaje("SISTEMA", "⚫ Modo Noticias DESACTIVADO")
+
+    def fetch_news_knowledge(self):
+        """Obtiene noticias breves del mundo de BBC Mundo en español"""
+        if not self.news_activo: return
+        
+        def job():
+            try:
+                url = "https://www.bbc.com/mundo/index.xml"
+                headers = {'User-Agent': 'MAGI-System/1.0 (raul@example.com)'}
+                r = requests.get(url, headers=headers, timeout=12)
+                if r.status_code == 200:
+                    content = r.text
+                    items = re.findall(r'<item>(.*?)</item>', content, re.DOTALL)
+                    if items:
+                        item = random.choice(items)
+                        title_match = re.search(r'<title>(.*?)</title>', item)
+                        desc_match = re.search(r'<description>(.*?)</description>', item)
+                        
+                        titulo = title_match.group(1) if title_match else "Noticia Global"
+                        titulo = re.sub(r'<!\[CDATA\[(.*?)\]\]>', r'\1', titulo)
+                        titulo = html.unescape(titulo).strip()
+                        
+                        desc = desc_match.group(1) if desc_match else ""
+                        desc = re.sub(r'<!\[CDATA\[(.*?)\]\]>', r'\1', desc)
+                        desc = re.sub(r'<[^>]+>', '', desc)
+                        desc = html.unescape(desc).strip()
+                        
+                        full_msg = f"{titulo.upper()}\n{desc}"
+                        
+                        QMetaObject.invokeMethod(self, "agregar_mensaje", 
+                                               Qt.QueuedConnection,
+                                               Q_ARG(str, "BBC MUNDO"),
+                                               Q_ARG(str, full_msg))
+                        
+                        contexto = f"Actualidad Mundial: {titulo}. {desc}"
+                        for brain in ["@MELCHOR", "@GASPAR", "@CASPER"]:
+                            msg = f"{brain} {contexto}"
+                            self.brain_manager.process_message(msg, self.signals)
+                            time.sleep(0.05)
+                
+            except Exception as e:
+                print(f"Error BBC News: {e}")
+            
+            finally:
+                if self.news_activo:
+                    # Velocidad MÁXIMA: 0.5 segundos
+                    intervalo = 500 if 'item' in locals() else 500
+                    QMetaObject.invokeMethod(self.news_timer, "start", 
+                                           Qt.QueuedConnection,
+                                           Q_ARG(int, intervalo))
+
+        threading.Thread(target=job, daemon=True).start()
+
+    def toggle_story_mode(self, state):
+        """Activa/Desactiva el modo de cuentos rápidos"""
+        self.story_activo = (state == 2)
+        if self.story_activo:
+            self.lbl_story_status.setText("📖 ACTIVO - Leyendo")
+            self.lbl_story_status.setStyleSheet("color: #f472b6; font-size: 11px; font-weight: bold;")
+            self.agregar_mensaje("SISTEMA", "📖 Modo Cuentos ACTIVADO (Lectura cada segundo)")
+            self.story_timer.start(100)
+        else:
+            self.story_timer.stop()
+            self.lbl_story_status.setText("⚫ INACTIVO")
+            self.lbl_story_status.setStyleSheet("color: #6b7280; font-size: 9px; font-style: italic;")
+            self.agregar_mensaje("SISTEMA", "⚫ Modo Cuentos DESACTIVADO")
+
+    def fetch_story_knowledge(self):
+        """Obtiene microrrelatos de internet (RSS) para entrenamiento creativo"""
+        if not self.story_activo: return
+        
+        # Si la cache está vacía, reponerla en un hilo
+        if not self.story_cache:
+            def refill_cache():
+                urls = [
+                    "https://www.relatos-cortos.es/feed/",
+                    "https://mundorelatos.wordpress.com/feed/",
+                    "https://www.senorbreve.com/feed/"
+                ]
+                new_stories = []
+                headers = {'User-Agent': 'MAGI-System/1.0 (raul@example.com)'}
+                
+                for url in urls:
+                    try:
+                        r = requests.get(url, headers=headers, timeout=10)
+                        if r.status_code == 200:
+                            content = r.text
+                            items = re.findall(r'<item>(.*?)</item>', content, re.DOTALL)
+                            for item in items:
+                                title_match = re.search(r'<title>(.*?)</title>', item)
+                                desc_match = re.search(r'<description>(.*?)</description>', item) or \
+                                             re.search(r'<content:encoded>(.*?)</content:encoded>', item, re.DOTALL)
+                                
+                                titulo = title_match.group(1) if title_match else ""
+                                titulo = re.sub(r'<!\[CDATA\[(.*?)\]\]>', r'\1', titulo)
+                                titulo = html.unescape(titulo).strip()
+                                
+                                desc = desc_match.group(1) if desc_match else ""
+                                desc = re.sub(r'<!\[CDATA\[(.*?)\]\]>', r'\1', desc)
+                                desc = re.sub(r'<[^>]+>', '', desc) # Limpiar HTML
+                                desc = html.unescape(desc).strip()
+                                
+                                if len(desc) > 20: # Evitar vacíos o muy cortos
+                                    # Limitar longitud para lectura rápida
+                                    snippet = desc[:500] + "..." if len(desc) > 500 else desc
+                                    new_stories.append(f"{titulo.upper()}\n{snippet}")
+                        
+                        if new_stories: break # Con uno que funcione vale
+                    except Exception as e:
+                        print(f"Error fetching RSS {url}: {e}")
+                
+                if new_stories:
+                    random.shuffle(new_stories)
+                    self.story_cache.extend(new_stories)
+                    # Una vez llena, procesar el primer elemento
+                    QMetaObject.invokeMethod(self, "_process_next_story", Qt.QueuedConnection)
+                else:
+                    # Fallback si falla internet
+                    fallbacks = [
+                        "En un rincón del código, una variable soñaba con ser constante.",
+                        "El silicio no olvida, solo archiva el silencio.",
+                        "La red es un laberinto donde la información busca su salida."
+                    ]
+                    self.story_cache.extend(fallbacks)
+                    QMetaObject.invokeMethod(self, "_process_next_story", Qt.QueuedConnection)
+
+            threading.Thread(target=refill_cache, daemon=True).start()
+            return
+
+        # Si hay cache, procesar directamente
+        self._process_next_story()
+
+    @Slot()
+    def _process_next_story(self):
+        """Procesa el siguiente cuento de la cache"""
+        if not self.story_activo or not self.story_cache:
+            return
+
+        story = self.story_cache.pop(0)
+        
+        def job():
+            try:
+                QMetaObject.invokeMethod(self, "agregar_mensaje", 
+                                       Qt.QueuedConnection,
+                                       Q_ARG(str, "CUENTACUENTOS"),
+                                       Q_ARG(str, story))
+                
+                contexto = f"Microrrelato de internet: {story}"
+                for brain in ["@MELCHOR", "@GASPAR", "@CASPER"]:
+                    msg = f"{brain} Analiza la narrativa de este cuento: {contexto}"
+                    self.brain_manager.process_message(msg, self.signals)
+                    time.sleep(0.05)
+                
+            except Exception as e:
+                print(f"Error Story Mode Job: {e}")
+            
+            finally:
+                if self.story_activo:
+                    # Velocidad: 1 segundo
+                    QMetaObject.invokeMethod(self.story_timer, "start", 
+                                           Qt.QueuedConnection,
+                                           Q_ARG(int, 1000))
+
+        threading.Thread(target=job, daemon=True).start()
+
     
     def alternar_escucha(self):
         """Alterna el estado de escucha del micrófono"""
@@ -987,6 +1336,12 @@ class MAGISystem(QMainWindow):
         self.agregar_mensaje("SISTEMA", "💤 Iniciando consolidación neuronal instantánea...")
         # Ejecutar en segundo plano para no congelar la UI si los cerebros son grandes
         threading.Thread(target=self.brain_manager.sleep_all_brains, 
+                        args=(self.signals,), daemon=True).start()
+
+    def siesta_cerebros(self):
+        """Activa el modo de siesta para refuerzo suave"""
+        self.agregar_mensaje("SISTEMA", "🛌 Iniciando siesta reparadora (refuerzo sin poda)...")
+        threading.Thread(target=self.brain_manager.siesta_all_brains, 
                         args=(self.signals,), daemon=True).start()
     
     def toggle_sidebar(self):
@@ -1033,6 +1388,76 @@ class MAGISystem(QMainWindow):
             self.agregar_mensaje("SISTEMA", f"Processing TXT files in: {os.path.basename(folder)}")
             threading.Thread(target=self.brain_manager.train_from_text_folder, 
                             args=(folder, self.signals), daemon=True).start()
+    
+    def abrir_carpeta_txt_gpu(self):
+        """Abre una carpeta de archivos TXT para entrenamiento GPU Masivo en modo Headless"""
+        folder = QFileDialog.getExistingDirectory(self, "Select Folder for Massive GPU Training", "/")
+        if folder:
+            self.agregar_mensaje("SISTEMA", "🖥️ SWITCHING TO HEADLESS TERMINAL MODE...")
+            
+            # Lanzar en modo headless
+            def run_headless():
+                trainer = HeadlessTrainer(self.brain_manager)
+                # Ocultar ventana principal
+                self.hide()
+                # Ejecutar trabajo (bloqueante hasta que termine el hilo interno del trainer o ESC)
+                trainer.run_job(self.brain_manager.train_from_text_folder_gpu, folder_path=folder)
+                # Mostrar ventana al volver
+                self.show()
+                self.agregar_mensaje("SISTEMA", "✅ Training session ended. Welcome back.")
+                self.barra_progreso.setValue(100)
+
+            # Ejecutar esto en un hilo separado para no congelar la GUI antes de ocultarse?
+            # No, queremos que bloquee la GUI ("hide" lo hace visualmente) pero necesitamos
+            # que el main thread quede libre si fuera GUI, pero aqui queremos tomar la terminal.
+            # Al usar 'self.hide()', la ventana se va. Podemos usar un hilo para lanzar el trainer
+            # pero el trainer usa input() y prints, así que mejor correrlo "aquí" pero 
+            # necesitamos asegurarnos que Qt no interfiera con stdin.
+            
+            # Mejor estrategia: Un QTimer o threading.
+            # Si corremos en MainThread, Qt bloqueará eventos pero eso está bien si la ventana está oculta.
+            # Sin embargo, 'run_job' tiene un loop de input.
+            
+            
+            threading.Thread(target=run_headless, daemon=False).start()
+
+    def abrir_terminal_gpu(self):
+        """Lanza el entrenamiento en una ventana de Terminal externa (Más robusto)"""
+        folder = QFileDialog.getExistingDirectory(self, "Select Folder for Terminal Training", "/")
+        if not folder: return
+
+        import subprocess
+        
+        # Ruta al script y al intérprete actual
+        script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "terminal_train.py")
+        python_exe = sys.executable
+        
+        # Comando de Shell: "python" "script" "folder"
+        # Importante: Envolver todo en comillas dobles para el Shell
+        cmd_str = f'"{python_exe}" "{script_path}" "{folder}"'
+        
+        # Escapar comillas dobles y barras invertidas para AppleScript
+        # AppleScript usa comillas dobles para strings. Si hay comillas dentro, deben ser \"
+        # Y las barras invertidas deben ser \\
+        cmd_str_applescript = cmd_str.replace('\\', '\\\\').replace('"', '\\"')
+        
+        # AppleScript para abrir Terminal y ejecutar
+        # activate: trae al frente
+        # do script: ejecuta el comando en una ventana nueva
+        apple_script = f'''
+        tell application "Terminal"
+            activate
+            do script "{cmd_str_applescript}"
+        end tell
+        '''
+        
+        try:
+            subprocess.run(["osascript", "-e", apple_script], check=True, capture_output=True, text=True)
+            self.agregar_mensaje("SISTEMA", "🚀 Launched External Terminal. Check the new window!")
+        except subprocess.CalledProcessError as e:
+            self.agregar_mensaje("SISTEMA", f"❌ Error launching terminal: {e.stderr}")
+        except Exception as e:
+            self.agregar_mensaje("SISTEMA", f"❌ Error launching terminal: {str(e)}")
     
     def abrir_pdf(self):
         """Abre un archivo PDF"""

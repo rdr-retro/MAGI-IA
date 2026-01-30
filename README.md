@@ -146,9 +146,9 @@ MAGI/
 │   │   └── styles.py              # Estilos CSS
 │   └── utils/
 │       └── __init__.py
-├── melchor.pkl                    # Cerebro MELCHOR
-├── gaspar.pkl                     # Cerebro GASPAR
-├── casper.pkl                     # Cerebro CASPER
+├── melchor.safetensors            # Cerebro MELCHOR
+├── gaspar.safetensors             # Cerebro GASPAR
+├── casper.safetensors             # Cerebro CASPER
 └── README.md
 ```
 
