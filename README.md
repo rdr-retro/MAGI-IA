@@ -1,4 +1,4 @@
-# 🧠 MAGI System - Multi-Agent General Intelligence
+# MAGI System - Multi-Agent General Intelligence
 
 <div align="center">
 
@@ -9,21 +9,21 @@
 
 **Un sistema de inteligencia artificial inspirado en NERV que utiliza tres cerebros neuronales independientes con votación democrática para generar respuestas consensuadas.**
 
-[Características](#-características) • [Instalación](#-instalación) • [Uso](#-uso) • [Arquitectura](#-arquitectura) • [Contribuir](#-contribuir)
+[Características](#características) • [Instalación](#instalación) • [Uso](#uso) • [Arquitectura](#arquitectura) • [Contribuir](#contribuir)
 
 </div>
 
 ---
 
-## 🌟 Características
+## Características
 
-### 🎯 Sistema de Tres Cerebros
+### Sistema de Tres Cerebros
 - **MELCHOR**: Cerebro analítico y preciso
 - **GASPAR**: Cerebro creativo y exploratorio  
 - **CASPER**: Cerebro escéptico con aleatoriedad controlada
 - **Votante Anónimo**: Cuarto votante opcional con decisiones aleatorias
 
-### 🧠 Aprendizaje Continuo
+### Aprendizaje Continuo
 - **Crecimiento Infinito**: Las redes neuronales se expanden automáticamente cada 500 caracteres procesados
 - **Optimizador Adam**: Aprendizaje adaptativo de alta eficiencia
 - **Entrenamiento Multi-Época**: 
@@ -31,22 +31,22 @@
   - Archivos (PDF/TXT): 5 épocas para aprendizaje profundo
   - Videos: 1 época para velocidad
 
-### 💤 Sistema de Sueño (Consolidación de Memoria)
+### Sistema de Sueño (Consolidación de Memoria)
 Inspirado en el sueño REM humano:
 - **Poda de Conexiones Débiles**: Elimina el 1% de conexiones más débiles
 - **Refuerzo de Conexiones Importantes**: Fortalece el 10% superior en un 10%
 - **Regularización L2**: Previene sobreajuste
 - **Normalización de Sesgos**: Estabiliza el comportamiento
 
-### 📚 Múltiples Fuentes de Aprendizaje
-- 📄 **Archivos de Texto** (.txt)
-- 📁 **Carpetas de Texto** (procesamiento masivo)
-- 📕 **Documentos PDF** (extracción inteligente)
-- 🎬 **Videos/Audio** (transcripción con Whisper)
-- 📂 **Carpetas de Videos** (procesamiento por lotes)
-- 💬 **Chat Interactivo** (aprendizaje en tiempo real)
+### Múltiples Fuentes de Aprendizaje
+- **Archivos de Texto** (.txt)
+- **Carpetas de Texto** (procesamiento masivo)
+- **Documentos PDF** (extracción inteligente)
+- **Videos/Audio** (transcripción con Whisper)
+- **Carpetas de Videos** (procesamiento por lotes)
+- **Chat Interactivo** (aprendizaje en tiempo real)
 
-### 🎨 Interfaz Moderna
+### Interfaz Moderna
 - Diseño inspirado en ChatGPT con tema oscuro
 - Animación de ADN en tiempo real
 - Feedback detallado de entrenamiento
@@ -55,7 +55,7 @@ Inspirado en el sueño REM humano:
 
 ---
 
-## 🚀 Instalación
+## Instalación
 
 ### Requisitos Previos
 - Python 3.8 o superior
@@ -88,7 +88,7 @@ torch>=2.0.0            # Backend de Whisper
 
 ---
 
-## 💻 Uso
+## Uso
 
 ### Inicio Rápido
 
@@ -100,25 +100,25 @@ python3 gui_magi_refactored.py
 
 2. **Chat Interactivo**:
    - Escribe tu mensaje en el campo de entrada
-   - Presiona Enter o click en ➡️
+   - Presiona Enter o click en el botón de envío
    - MAGI deliberará y responderá por consenso
 
 3. **Entrenar con Archivos**:
-   - Click en **📄 Text** para archivos .txt
-   - Click en **📕 PDF** para documentos PDF
-   - Click en **🎬 Video** para transcribir y aprender de videos
-   - Click en **📁 TXT Folder** para procesar carpetas completas
+   - Seleccionar Text para archivos .txt
+   - Seleccionar PDF para documentos PDF
+   - Seleccionar Video para transcribir y aprender de videos
+   - Seleccionar TXT Folder para procesar carpetas completas
 
 4. **Modo de Sueño**:
-   - Click en **💤 Sleep Mode** después de sesiones largas
+   - Activar Sleep Mode después de sesiones largas
    - Consolida la memoria y optimiza las conexiones
    - Mejora la calidad de respuestas futuras
 
 ### Configuración de Cerebros
 
 Puedes activar/desactivar cerebros individualmente:
-- ✅ **Checkbox verde**: Cerebro activo (participa en votaciones)
-- ⚫ **Checkbox gris**: Cerebro inactivo (no participa)
+- **Checkbox seleccionado**: Cerebro activo (participa en votaciones)
+- **Checkbox desmarcado**: Cerebro inactivo (no participa)
 
 ### Votante Anónimo
 
@@ -129,7 +129,7 @@ Activa el votante anónimo para:
 
 ---
 
-## 🏗️ Arquitectura
+## Arquitectura
 
 ### Estructura del Proyecto
 
@@ -178,12 +178,12 @@ Cada cerebro es una red neuronal de 2 capas:
 - **Capa de Entrada**: Vocabulario completo (caracteres)
 - **Capa Oculta**: Tanh activation (128+ neuronas, crece dinámicamente)
 - **Capa de Salida**: Softmax sobre vocabulario
-- **Optimizador**: Adam con β₁=0.9, β₂=0.999
+- **Optimizador**: Adam con β1=0.9, β2=0.999
 - **Learning Rate**: 0.001
 
 ---
 
-## 🧪 Características Técnicas
+## Características Técnicas
 
 ### Optimizaciones de Rendimiento
 
@@ -226,18 +226,18 @@ El sistema de sueño implementa:
 
 ---
 
-## 📊 Estadísticas y Monitoreo
+## Estadísticas y Monitoreo
 
 La interfaz muestra en tiempo real:
-- 🧠 **Neuronas por cerebro**: Crecimiento dinámico
-- 💾 **Memoria total**: Tamaño en MB de los tres cerebros
-- 📈 **Progreso de entrenamiento**: Barra visual
-- 🔴 **Estado de cerebros**: Activo/Inactivo
-- 🟣 **Votante anónimo**: Activo/Inactivo
+- **Neuronas por cerebro**: Crecimiento dinámico
+- **Memoria total**: Tamaño en MB de los tres cerebros
+- **Progreso de entrenamiento**: Barra visual
+- **Estado de cerebros**: Activo/Inactivo
+- **Votante anónimo**: Activo/Inactivo
 
 ---
 
-## 🎯 Casos de Uso
+## Casos de Uso
 
 ### 1. Asistente Personal
 Entrena MAGI con tus documentos personales para crear un asistente que conoce tu contexto.
@@ -253,7 +253,7 @@ Crea un chatbot con personalidad única basado en corpus de texto específico.
 
 ---
 
-## 🔧 Configuración Avanzada
+## Configuración Avanzada
 
 ### Ajustar Épocas de Entrenamiento
 
@@ -287,7 +287,7 @@ def expandir_cerebro(self):
 
 ---
 
-## 🐛 Solución de Problemas
+## Solución de Problemas
 
 ### Error: "command not found: python"
 ```bash
@@ -306,13 +306,13 @@ python3 gui_magi_refactored.py
 - Revisa que los cerebros estén activos (checkbox verde)
 
 ### Respuestas inconsistentes
-- Ejecuta **💤 Sleep Mode** para consolidar memoria
+- Ejecutar Sleep Mode para consolidar memoria
 - Entrena con más datos relevantes
 - Considera desactivar el votante anónimo
 
 ---
 
-## 🤝 Contribuir
+## Contribuir
 
 ¡Las contribuciones son bienvenidas! Por favor:
 
@@ -324,13 +324,13 @@ python3 gui_magi_refactored.py
 
 ---
 
-## 📝 Licencia
+## Licencia
 
 Este proyecto está bajo la Licencia MIT. Ver `LICENSE` para más detalles.
 
 ---
 
-## 🙏 Agradecimientos
+## Agradecimientos
 
 - Inspirado en el sistema MAGI de Neon Genesis Evangelion
 - Whisper de OpenAI para transcripción de audio
@@ -339,7 +339,7 @@ Este proyecto está bajo la Licencia MIT. Ver `LICENSE` para más detalles.
 
 ---
 
-## 📧 Contacto
+## Contacto
 
 Raúl Díaz - [@tu_twitter](https://twitter.com/tu_twitter)
 
@@ -349,8 +349,8 @@ Link del Proyecto: [https://github.com/tu-usuario/MAGI](https://github.com/tu-us
 
 <div align="center">
 
-**Hecho con 🧠 y ☕ por Raúl Díaz**
+**Hecho con concentración y dedicación por Raúl Díaz**
 
-⭐ Si te gusta este proyecto, ¡dale una estrella en GitHub! ⭐
+Si te gusta este proyecto, ¡dale una estrella en GitHub!
 
 </div>
